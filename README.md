@@ -1,8 +1,9 @@
 # plane-vtp-target-field (Voronoi Topological Perception)
 
-The VTP agent model on the plane with a **lattice of static targets across
-the whole plane** and **one oscillating target whose frequency you choose**,
-as a MATLAB model and a dependency-free browser port of the same dynamics.
+The VTP agent model on the plane with a **large lattice of static targets**
+(independent x and y spacing) and **one target that oscillates in x and y**,
+with adjustable frequencies and **asymmetric strokes** (fast return), as a
+MATLAB model and a dependency-free browser port of the same dynamics.
 
 **[Live site →](#)** (enable GitHub Pages, see below)
 
@@ -29,20 +30,31 @@ Agents follow the Voronoi Topological Perception (VTP) model:
 All targets are point targets, and each agent homes toward whichever one is
 currently nearest to it.
 
-- **Static targets** form a square lattice covering `[-H, H]^2`, one target
-  every `spacing` units (defaults: `H = 20`, `spacing = 5`, i.e. 81 targets).
-- **One oscillating target** swings along a line through a chosen center:
+- **Static targets** form a rectangular lattice covering `[-H, H]^2`, with a
+  spacing in x and a spacing in y that you choose independently (defaults:
+  `H = 50`, spacing 5 in both, i.e. 441 targets).
+- **One oscillating target** oscillates in **both x and y** around a center:
 
   ```
-  position(t) = center + amplitude * sin(2*pi * frequency * t) * (cos(angle), sin(angle))
+  x(t) = cx + Ax * w( fx*t,                 nx )
+  y(t) = cy + Ay * w( fy*t + phase/360,     ny )
   ```
 
-  `frequency` is in **cycles per time step** (period = 1 / frequency steps), and
-  is the parameter you choose. `frequency = 0` freezes the target at its center.
+  Each axis has its own amplitude `A`, frequency `f` (cycles per time step, so
+  the period is 1 / f steps) and asymmetry ratio `n`; y can be phase-shifted
+  relative to x. With equal frequencies and amplitudes, a 90 degree phase offset
+  and `n = 1` the target travels on a circle; with different frequencies it
+  traces a Lissajous curve. A frequency of 0 freezes that axis.
+- **Asymmetric strokes.** The waveform `w` goes up and comes back down once per
+  period. The ratio `n` sets how fast it comes back: the outgoing stroke takes
+  the fraction `n/(n+1)` of the period and the return stroke `1/(n+1)`, so the
+  return is **`n` times faster** than the way out. `n = 1` is a plain sine,
+  `n = 3` returns three times faster, `n < 1` returns slower. Both strokes are
+  half-cosines, so the motion is smooth at the turning points.
 
 Because agents choose the *nearest* target, the oscillating target mostly pulls
 in agents that are closer to it than to any lattice point. A larger lattice
-spacing or swing amplitude gives it a larger catchment area.
+spacing or the oscillation amplitudes gives it a larger catchment area.
 
 ## Structure
 
@@ -65,8 +77,9 @@ python3 -m http.server 8000
 ```
 
 then visit `http://localhost:8000/`. The live controls cover the number of
-agents, &nu;, the lattice spacing and half-width, and the oscillating target's
-frequency (slider or exact number), amplitude, angle and center.
+agents, &nu;, the lattice spacing in x and y and the half-width, and, for the
+oscillating target, the frequency (slider or exact number), amplitude and
+return-speed ratio of each axis, the y phase offset, and the center.
 
 ## Running the MATLAB version
 
@@ -79,17 +92,23 @@ or open `matlab/dynamics.m` in the MATLAB editor and run it. The target-field
 settings are at the top of the file:
 
 ```matlab
-grid_half    = 20;      % static lattice covers [-grid_half, grid_half]^2
-grid_spacing = 5;       % one static target every grid_spacing units
+grid_half      = 50;     % static lattice covers [-grid_half, grid_half]^2
+grid_spacing_x = 5;      % one static target every grid_spacing_x units in x
+grid_spacing_y = 5;      % ... and every grid_spacing_y units in y
 
-osc_freq   = 0.01;      % oscillation frequency, cycles per time step  <-- choose this
-osc_amp    = 8;         % amplitude of the swing
-osc_center = [0 0];     % center of the swing
-osc_angle  = pi/2;      % direction of the swing (0 = horizontal)
+osc_center  = [0 0];     % center of the oscillation
+osc_amp_x   = 15;        % amplitudes
+osc_amp_y   = 15;
+osc_freq_x  = 0.01;      % frequencies, cycles per time step   <-- choose these
+osc_freq_y  = 0.01;
+osc_ratio_x = 1;         % asymmetry n: return stroke n times faster (1 = symmetric)
+osc_ratio_y = 1;
+osc_phase_y = 90;        % y phase offset relative to x, degrees
 ```
 
 The lattice is plotted as grey squares and the oscillating target as a red
-dot. `matlab/` contains `dynamics.m` plus the files it depends on:
+dot. The asymmetric waveform is the local function `oscWave` at the bottom of
+`dynamics.m`. `matlab/` contains `dynamics.m` plus the files it depends on:
 `Target.m`, `nearestOnSegment.m`, `neighborhoods.m`, `transition.m`,
 `alignTo.m`, `voronoiProjectToBoundary.m`, and (only needed if you set
 `fdim = 2`) `voronoiForwardArea.m` and `poly_area.m`. MATLAB needs the
@@ -131,6 +150,12 @@ The browser port implements the same VTP model as `dynamics.m` (with
   script (2 and 18), but MATLAB's `rng` cannot be reproduced in JavaScript, so
   the exact starting positions (and therefore trajectories) differ from
   MATLAB's. The behavior is statistically the same.
+- The nearest static target is found by rounding the agent's position to the
+  rectangular lattice (exact, and much faster than scanning every lattice point).
+  I checked it against a brute-force scan on 2000 random points with zero
+  mismatches. The waveform `oscWave` was also checked to be exactly
+  `sin(2*pi*u)` at `n = 1`, and to spend `n/(n+1)` of the period on the outgoing
+  stroke.
 - Only `fdim = 1` is ported; the forward-area speed option (`fdim = 2`) is
   MATLAB-only.
 - The MATLAB script was not run in MATLAB while it was being written.

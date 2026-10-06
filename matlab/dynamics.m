@@ -5,26 +5,36 @@ nu = 2.5;
 tmax = 1000;
 
 %% Target field parameters
-% STATIC targets: a square lattice of point targets covering the plane
-% (window [-grid_half, grid_half]^2, one target every grid_spacing units).
-% Every agent homes toward whichever target (static or oscillating) is
-% nearest to it.
-grid_half    = 20;
-grid_spacing = 5;
+% STATIC targets: a rectangular lattice of point targets covering the plane
+% (window [-grid_half, grid_half]^2). The spacing is set separately in x
+% and in y. Every agent homes toward whichever target (static or
+% oscillating) is nearest to it.
+grid_half      = 50;
+grid_spacing_x = 5;      % one static target every grid_spacing_x units in x
+grid_spacing_y = 5;      % ... and every grid_spacing_y units in y
 
-% ONE OSCILLATING target: moves back and forth along a line through
-% osc_center, in direction osc_angle (0 = horizontal, pi/2 = vertical),
-%     position(t) = osc_center + osc_amp*sin(2*pi*osc_freq*t)*[cos(osc_angle) sin(osc_angle)]
-% osc_freq is the FREQUENCY YOU CHOOSE, in cycles per time step
-% (period = 1/osc_freq steps). osc_freq = 0 freezes it at osc_center.
-osc_freq   = 0.01;       % cycles per time step (0.01 -> one full swing every 100 steps)
-osc_amp    = 8;          % amplitude of the swing
-osc_center = [0 0];      % center of the swing
-osc_angle  = pi/2;       % direction of the swing
+% ONE OSCILLATING target that oscillates in BOTH x and y around osc_center:
+%     x(t) = osc_center(1) + osc_amp_x*oscWave(osc_freq_x*t,                   osc_ratio_x)
+%     y(t) = osc_center(2) + osc_amp_y*oscWave(osc_freq_y*t + osc_phase_y/360, osc_ratio_y)
+% Each axis has its own amplitude, FREQUENCY (cycles per time step, so the
+% period is 1/freq steps) and ASYMMETRY ratio. oscWave (bottom of this file)
+% goes up and comes back down once per period; the ratio n is how much
+% faster it comes back than it went: the outgoing stroke takes the fraction
+% n/(n+1) of the period and the return stroke 1/(n+1). n = 1 is a plain
+% sine, n = 3 returns three times faster, n < 1 returns slower.
+osc_center  = [0 0];     % center of the oscillation
+osc_amp_x   = 15;        % amplitude in x
+osc_amp_y   = 15;        % amplitude in y
+osc_freq_x  = 0.01;      % x frequency, cycles per time step (0.01 -> period of 100 steps)
+osc_freq_y  = 0.01;      % y frequency, cycles per time step
+osc_ratio_x = 1;         % x asymmetry n (return stroke n times faster; 1 = symmetric)
+osc_ratio_y = 1;         % y asymmetry n
+osc_phase_y = 90;        % y phase offset relative to x, in degrees (90 with equal freqs/amps = circle)
+% a frequency of 0 freezes that axis at its center
 
 display=true;
 fixframe = false;
-frameinrad = 50;
+frameinrad = 1.2*grid_half;
 
 fdim = 1;
 M0 = L;
@@ -92,11 +102,11 @@ tar = Target({tar_rad*[1 0],tar_rad*[cos(tar_ang) sin(tar_ang)],tar_rad*[cos(2*t
 % tar = Target();
 
 % --- static lattice of point targets + one oscillating target ---------
-[gx,gy] = meshgrid(-grid_half:grid_spacing:grid_half);
+[gx,gy] = meshgrid(-grid_half:grid_spacing_x:grid_half, -grid_half:grid_spacing_y:grid_half);
 staticPts = [gx(:) gy(:)];
 nStatic = size(staticPts,1);
-oscDir = [cos(osc_angle) sin(osc_angle)];
-oscPos = @(t) osc_center + osc_amp*sin(2*pi*osc_freq*t)*oscDir;
+oscPos = @(t) osc_center + [ osc_amp_x*oscWave(osc_freq_x*t, osc_ratio_x), ...
+                             osc_amp_y*oscWave(osc_freq_y*t + osc_phase_y/360, osc_ratio_y) ];
 
 % components 1..nStatic are the fixed lattice points; the LAST component
 % (index oscIdx) is the oscillating target, moved every step below
@@ -210,7 +220,7 @@ if display==true
         frame = [com(1)-3*rmed com(1)+3*rmed com(2)-3*rmed com(2)+3*rmed];
     end
     axis(frame);
-    title(['$t=',num2str(t),',\; f_{osc}=',num2str(osc_freq),'$'], 'Interpreter', 'Latex');
+    title(['$t=',num2str(t),',\; f_x=',num2str(osc_freq_x),',\; f_y=',num2str(osc_freq_y),',\; n=(',num2str(osc_ratio_x),',',num2str(osc_ratio_y),')$'], 'Interpreter', 'Latex');
 end
 
 %% Update
@@ -232,3 +242,23 @@ end
 
 
 save("data.mat",'DT_t','U_t');
+
+
+%% Local functions
+function w = oscWave(u, n)
+% Asymmetric periodic waveform with values in [-1, 1].
+%   u : position in the cycle (any real number; only mod(u,1) matters)
+%   n : speed ratio. The outgoing stroke (-1 -> +1) takes the fraction
+%       p = n/(n+1) of the period and the return stroke (+1 -> -1) takes
+%       1-p, so the return is n times faster than the outgoing stroke.
+% Both strokes are half-cosines, so the motion is smooth at the turning
+% points. u = 0 is the midpoint of the outgoing stroke (w = 0, moving up),
+% and n = 1 gives exactly sin(2*pi*u).
+p = n/(n+1);
+v = mod(u + p/2, 1);
+if v < p
+    w = -cos(pi*v/p);
+else
+    w = cos(pi*(v-p)/(1-p));
+end
+end

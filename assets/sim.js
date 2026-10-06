@@ -16,9 +16,12 @@
        cell boundary along the direction of motion (so crowded agents
        slow down, agents on the hull move at full speed).
    TARGET FIELD (the scenario this repo is about):
-     - a square lattice of STATIC point targets across the plane
-     - ONE oscillating target on a line through osc_center, whose
-       frequency (cycles per time step) you choose live.
+     - a rectangular lattice of STATIC point targets across the plane,
+       with independent spacing in x and in y
+     - ONE oscillating target that oscillates in BOTH x and y. Each axis
+       has its own frequency (cycles per time step), amplitude, and
+       asymmetry ratio n (return stroke n times faster than the outgoing
+       stroke), and y can be phase-shifted relative to x.
    Every agent homes toward whichever target (static or oscillating)
    is nearest to it.
    =========================================================== */
@@ -27,13 +30,19 @@ const PARAMS = {
   N_DEFAULT: 400,
   L: 1,                 // interaction length scale (MATLAB: L = 1); also M0 for the speed governor
   NU_DEFAULT: 2.5,      // alignment strength (live-editable: sim.nu)
-  GRID_HALF: 20,        // static lattice covers [-GRID_HALF, GRID_HALF]^2
-  GRID_SPACING: 5,      // one static target every GRID_SPACING units
-  OSC_FREQ: 0.01,       // oscillating target frequency, cycles per time step
-  OSC_AMP: 8,           // amplitude of the swing
-  OSC_ANGLE_DEG: 90,    // direction of the swing (0 = horizontal, 90 = vertical)
-  OSC_CX: 0,            // center of the swing
+  GRID_HALF: 50,        // static lattice covers [-GRID_HALF, GRID_HALF]^2
+  GRID_SPACING_X: 5,    // one static target every GRID_SPACING_X units in x
+  GRID_SPACING_Y: 5,    // ... and every GRID_SPACING_Y units in y
+  OSC_CX: 0,            // center of the oscillation
   OSC_CY: 0,
+  OSC_AMP_X: 15,        // amplitude of the x oscillation
+  OSC_AMP_Y: 15,        // amplitude of the y oscillation
+  OSC_FREQ_X: 0.01,     // x frequency, cycles per time step (period = 1/freq steps)
+  OSC_FREQ_Y: 0.01,     // y frequency, cycles per time step
+  OSC_RATIO_X: 1,       // x asymmetry n: the return stroke is n times faster than the outgoing one (1 = symmetric)
+  OSC_RATIO_Y: 1,       // y asymmetry n
+  OSC_PHASE_Y_DEG: 90,  // y phase offset relative to x, degrees (90 with equal freqs and amps = circle)
+  TRAIL_LEN: 600,       // how many past positions of the oscillating target are drawn
   POS_SEED: 2,          // same seeds the MATLAB script uses (rng(2), rng(18))
   ANG_SEED: 18,
 };
@@ -49,6 +58,20 @@ function mulberry32(seed) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/* Asymmetric periodic waveform in [-1, 1] (oscWave in dynamics.m).
+   u = position in the cycle (any real number, taken mod 1). n = speed ratio:
+   the outgoing stroke (-1 -> +1) takes the fraction p = n/(n+1) of the
+   period and the return stroke (+1 -> -1) takes 1 - p, so the return is n
+   times faster than the outgoing stroke. Both strokes are half-cosines, so
+   the motion is smooth at the turning points. u = 0 is the midpoint of the
+   outgoing stroke (w = 0, moving up), and n = 1 is exactly sin(2*pi*u). */
+function oscWave(u, n) {
+  const p = n / (n + 1);
+  let v = u + p / 2;
+  v -= Math.floor(v);
+  return v < p ? -Math.cos((Math.PI * v) / p) : Math.cos((Math.PI * (v - p)) / (1 - p));
 }
 
 /* transition.m, 'expReciprocal': smooth step, 1 at x=0 and exactly 0 for x>=1 */
@@ -132,12 +155,18 @@ class VTPSim {
     this.nu = PARAMS.NU_DEFAULT;
     this.L = PARAMS.L;
     this.gridHalf = PARAMS.GRID_HALF;
-    this.gridSpacing = PARAMS.GRID_SPACING;
-    this.oscFreq = PARAMS.OSC_FREQ;
-    this.oscAmp = PARAMS.OSC_AMP;
-    this.oscAngleDeg = PARAMS.OSC_ANGLE_DEG;
+    this.gridSpacingX = PARAMS.GRID_SPACING_X;
+    this.gridSpacingY = PARAMS.GRID_SPACING_Y;
     this.oscCx = PARAMS.OSC_CX;
     this.oscCy = PARAMS.OSC_CY;
+    this.oscAmpX = PARAMS.OSC_AMP_X;
+    this.oscAmpY = PARAMS.OSC_AMP_Y;
+    this.oscFreqX = PARAMS.OSC_FREQ_X;
+    this.oscFreqY = PARAMS.OSC_FREQ_Y;
+    this.oscRatioX = PARAMS.OSC_RATIO_X;
+    this.oscRatioY = PARAMS.OSC_RATIO_Y;
+    this.oscPhaseYDeg = PARAMS.OSC_PHASE_Y_DEG;
+    this.trail = [];
     this.followSwarm = true;       // MATLAB: fixframe = false
     this.showHeadings = true;
     this.stepsPerFrame = 1;
@@ -149,22 +178,29 @@ class VTPSim {
     this.setup(N);
   }
 
-  /* static lattice: meshgrid(-gridHalf:gridSpacing:gridHalf) */
+  /* static lattice: meshgrid(-gridHalf:spacingX:gridHalf, -gridHalf:spacingY:gridHalf) */
   buildLattice() {
-    const pts = [];
-    const sp = Math.max(this.gridSpacing, 0.25);
-    const n = Math.floor((2 * this.gridHalf) / sp + 1e-9);
-    for (let iy = 0; iy <= n; iy++)
-      for (let ix = 0; ix <= n; ix++)
-        pts.push(-this.gridHalf + ix * sp, -this.gridHalf + iy * sp);
-    this.statics = Float64Array.from(pts);
-    this.nStatic = pts.length / 2;
+    const H = this.gridHalf;
+    const sx = Math.max(this.gridSpacingX, 0.25), sy = Math.max(this.gridSpacingY, 0.25);
+    const nx = Math.floor((2 * H) / sx + 1e-9), ny = Math.floor((2 * H) / sy + 1e-9);
+    this.spX = sx; this.spY = sy; this.cellsX = nx; this.cellsY = ny;
+    const pts = new Float64Array(2 * (nx + 1) * (ny + 1));
+    let k = 0;
+    for (let iy = 0; iy <= ny; iy++)
+      for (let ix = 0; ix <= nx; ix++) { pts[k++] = -H + ix * sx; pts[k++] = -H + iy * sy; }
+    this.statics = pts;
+    this.nStatic = (nx + 1) * (ny + 1);
   }
 
+  /* oscillating target: x and y each follow their own asymmetric waveform.
+     phaseX / phaseY are in cycles and accumulate by freq each step, so
+     changing a frequency live never makes the target jump. */
   oscPos() {
-    const a = (this.oscAngleDeg * Math.PI) / 180;
-    const s = this.oscAmp * Math.sin(this.phase);
-    return [this.oscCx + s * Math.cos(a), this.oscCy + s * Math.sin(a)];
+    const ux = this.phaseX, uy = this.phaseY + this.oscPhaseYDeg / 360;
+    return [
+      this.oscCx + this.oscAmpX * oscWave(ux, this.oscRatioX),
+      this.oscCy + this.oscAmpY * oscWave(uy, this.oscRatioY),
+    ];
   }
 
   /* new run. seeded = true reproduces the MATLAB-style fixed seeds. */
@@ -187,7 +223,9 @@ class VTPSim {
       this.U[2 * i + 1] = Math.sin(ang);
     }
     this.t = 1;                                   // MATLAB loop index of the displayed state
-    this.phase = 2 * Math.PI * this.oscFreq * this.t;
+    this.phaseX = this.oscFreqX * this.t;         // cycles
+    this.phaseY = this.oscFreqY * this.t;
+    this.trail = [];
     this.cam = null;
     this.compute();
     if (this.onSetupChange) this.onSetupChange();
@@ -200,6 +238,8 @@ class VTPSim {
     const N = this.N, X = this.X, L = this.L, nu = this.nu;
     const [ox, oy] = this.oscPos();
     this.oscX = ox; this.oscY = oy;
+    this.trail.push(ox, oy);
+    if (this.trail.length > 2 * PARAMS.TRAIL_LEN) this.trail.splice(0, this.trail.length - 2 * PARAMS.TRAIL_LEN);
 
     const nbr = delaunayNeighbors(X, N);
     this.nbr = nbr;
@@ -244,11 +284,13 @@ class VTPSim {
       // homing: unit vector toward the nearest target, length (1 - s)
       let bestD2 = Infinity, hx = 0, hy = 0;
       const px = X[2 * i], py = X[2 * i + 1];
-      const S = this.statics;
-      for (let k = 0; k < this.nStatic; k++) {
-        const dx = S[2 * k] - px, dy = S[2 * k + 1] - py;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < bestD2) { bestD2 = d2; hx = dx; hy = dy; }
+      {
+        // nearest lattice point: the lattice is rectangular, so round each axis independently
+        const H = this.gridHalf;
+        const ix = clamp(Math.round((px + H) / this.spX), 0, this.cellsX);
+        const iy = clamp(Math.round((py + H) / this.spY), 0, this.cellsY);
+        const dx = -H + ix * this.spX - px, dy = -H + iy * this.spY - py;
+        bestD2 = dx * dx + dy * dy; hx = dx; hy = dy;
       }
       {
         const dx = ox - px, dy = oy - py;
@@ -288,7 +330,8 @@ class VTPSim {
     const N = this.N;
     for (let i = 0; i < 2 * N; i++) { this.X[i] += this.Unext[i]; this.U[i] = this.Unext[i]; }
     this.t++;
-    this.phase += 2 * Math.PI * this.oscFreq;
+    this.phaseX += this.oscFreqX;
+    this.phaseY += this.oscFreqY;
     this.compute();
   }
 
@@ -306,7 +349,8 @@ class VTPSim {
       cx = mx; cy = my; hw = Math.max(3 * r[N >> 1], 4);
     } else {
       cx = 0; cy = 0;
-      hw = 1.15 * Math.max(this.gridHalf, Math.hypot(this.oscCx, this.oscCy) + this.oscAmp) + 2;
+      hw = 1.15 * Math.max(this.gridHalf,
+        Math.abs(this.oscCx) + this.oscAmpX, Math.abs(this.oscCy) + this.oscAmpY) + 2;
     }
     if (!this.cam) this.cam = { cx, cy, hw };
     const a = 0.08;
@@ -330,21 +374,28 @@ class VTPSim {
     const scale = Math.min(w, h) / (2 * hw);
     const toPx = (x, y) => [w / 2 + (x - cx) * scale, h / 2 - (y - cy) * scale];
 
-    // path of the oscillating target
+    // recent trail of the oscillating target
     {
-      const a = (this.oscAngleDeg * Math.PI) / 180;
-      const [x0, y0] = toPx(this.oscCx - this.oscAmp * Math.cos(a), this.oscCy - this.oscAmp * Math.sin(a));
-      const [x1, y1] = toPx(this.oscCx + this.oscAmp * Math.cos(a), this.oscCy + this.oscAmp * Math.sin(a));
-      ctx.strokeStyle = "rgba(242,104,95,0.35)"; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
-      ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
-      ctx.setLineDash([]);
+      const tr = this.trail;
+      if (tr.length >= 4) {
+        ctx.strokeStyle = "rgba(242,104,95,0.40)"; ctx.lineWidth = 1;
+        ctx.beginPath();
+        let [qx, qy] = toPx(tr[0], tr[1]);
+        ctx.moveTo(qx, qy);
+        for (let k = 2; k < tr.length; k += 2) { [qx, qy] = toPx(tr[k], tr[k + 1]); ctx.lineTo(qx, qy); }
+        ctx.stroke();
+      }
     }
 
-    // static lattice targets
+    // static lattice targets (only those inside the view)
     ctx.fillStyle = "#6b7280";
-    const sq = clamp(0.35 * scale, 3, 7);
+    const sq = clamp(0.35 * scale, 2, 7);
+    const xlo = cx - w / (2 * scale) - 1, xhi = cx + w / (2 * scale) + 1;
+    const ylo = cy - h / (2 * scale) - 1, yhi = cy + h / (2 * scale) + 1;
     for (let k = 0; k < this.nStatic; k++) {
-      const [px, py] = toPx(this.statics[2 * k], this.statics[2 * k + 1]);
+      const gx = this.statics[2 * k], gy = this.statics[2 * k + 1];
+      if (gx < xlo || gx > xhi || gy < ylo || gy > yhi) continue;
+      const [px, py] = toPx(gx, gy);
       ctx.fillRect(px - sq / 2, py - sq / 2, sq, sq);
     }
 
@@ -377,4 +428,4 @@ class VTPSim {
   }
 }
 
-if (typeof module !== "undefined") module.exports = { VTPSim, PARAMS, delaunayNeighbors, expReciprocal };
+if (typeof module !== "undefined") module.exports = { VTPSim, PARAMS, delaunayNeighbors, expReciprocal, oscWave };

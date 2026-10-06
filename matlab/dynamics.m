@@ -32,9 +32,16 @@ osc_ratio_y = 1;         % y asymmetry n
 osc_phase_y = 90;        % y phase offset relative to x, in degrees (90 with equal freqs/amps = circle)
 % a frequency of 0 freezes that axis at its center
 
+% TRANSLATION of the WHOLE field: the static lattice and the oscillating
+% target (with its oscillation center) all move rigidly at a constant
+% velocity. At time t the field has shifted by field_vel*t.
+field_speed = 0.2;       % translation speed, units per time step (agents move at up to 1)
+field_angle = 0;         % direction of the translation, degrees (0 = +x, 90 = +y)
+field_vel   = field_speed*[cosd(field_angle) sind(field_angle)];
+
 display=true;
 fixframe = false;
-frameinrad = 1.2*grid_half;
+frameinrad = 1.2*grid_half;   % with fixframe = true the frame is centered on the moving field
 
 fdim = 1;
 M0 = L;
@@ -107,11 +114,12 @@ staticPts = [gx(:) gy(:)];
 nStatic = size(staticPts,1);
 oscPos = @(t) osc_center + [ osc_amp_x*oscWave(osc_freq_x*t, osc_ratio_x), ...
                              osc_amp_y*oscWave(osc_freq_y*t + osc_phase_y/360, osc_ratio_y) ];
+fieldOff = @(t) field_vel*t;          % how far the whole field has moved at time t
 
-% components 1..nStatic are the fixed lattice points; the LAST component
-% (index oscIdx) is the oscillating target, moved every step below
-oscIdx = nStatic + 1;
-comps = [ mat2cell(staticPts, ones(nStatic,1), 2); {oscPos(0)} ];
+% components 1..nStatic are the lattice points; the LAST component is the
+% oscillating target. The Target is rebuilt every step below, because every
+% component moves with the field.
+comps = [ mat2cell(staticPts + fieldOff(0), ones(nStatic,1), 2); {oscPos(0) + fieldOff(0)} ];
 tar = Target(comps);
 
 %% Preallocation of some intermediate variables
@@ -127,8 +135,9 @@ DT_t = cell(tmax,1);
 for t = 1:tmax
 %% Compute step
 
-% move the oscillating target (static lattice targets never change)
-tar = setComponent(tar, oscIdx, oscPos(t));
+% translate the whole field and move the oscillating target within it
+off = fieldOff(t);
+tar = Target([ mat2cell(staticPts + off, ones(nStatic,1), 2); {oscPos(t) + off} ]);
 
 DT = delaunayTriangulation(X);
 DT_t{t} = DT;
@@ -194,8 +203,8 @@ if display==true
     end
     
     % static lattice targets (grey) and the oscillating target (red)
-    scatter(staticPts(:,1), staticPts(:,2), 25, [.5 .5 .5], 's');
-    po = oscPos(t);
+    scatter(staticPts(:,1)+off(1), staticPts(:,2)+off(2), 25, [.5 .5 .5], 's');
+    po = oscPos(t) + off;
     scatter(po(1), po(2), 80, 'r', 'filled');
     
     
@@ -213,14 +222,14 @@ if display==true
     axis equal
     
     
-    frame = [-frameinrad frameinrad -frameinrad frameinrad];
+    frame = [-frameinrad frameinrad -frameinrad frameinrad] + [off(1) off(1) off(2) off(2)];
     if ~fixframe
         com = mean(X);
         rmed = sqrt(median((X(:,1)-com(1)).^2+(X(:,2)-com(2)).^2));
         frame = [com(1)-3*rmed com(1)+3*rmed com(2)-3*rmed com(2)+3*rmed];
     end
     axis(frame);
-    title(['$t=',num2str(t),',\; f_x=',num2str(osc_freq_x),',\; f_y=',num2str(osc_freq_y),',\; n=(',num2str(osc_ratio_x),',',num2str(osc_ratio_y),')$'], 'Interpreter', 'Latex');
+    title(['$t=',num2str(t),',\; f_x=',num2str(osc_freq_x),',\; f_y=',num2str(osc_freq_y),',\; n=(',num2str(osc_ratio_x),',',num2str(osc_ratio_y),'),\; v_{field}=',num2str(field_speed),'$'], 'Interpreter', 'Latex');
 end
 
 %% Update

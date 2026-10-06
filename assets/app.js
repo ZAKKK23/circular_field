@@ -24,7 +24,10 @@ const $ = (id) => document.getElementById(id);
 const statusLine = $("statusLine");
 const numAgents = $("numAgents");
 const spfSlider = $("spfSlider"), spfVal = $("spfVal");
-const followCb = $("followCb"), headingsCb = $("headingsCb");
+const viewSelect = $("viewSelect"), headingsCb = $("headingsCb");
+const fsSlider = $("fsSlider"), fsVal = $("fsVal");
+const faSlider = $("faSlider"), faVal = $("faVal");
+const fieldVelInfo = $("fieldVelInfo");
 const nuSlider = $("nuSlider"), nuVal = $("nuVal");
 const spXSlider = $("spXSlider"), spXVal = $("spXVal");
 const spYSlider = $("spYSlider"), spYVal = $("spYVal");
@@ -86,7 +89,15 @@ function rebuildLattice() {
 }
 
 spfSlider.addEventListener("input", () => { sim.stepsPerFrame = +spfSlider.value; spfVal.textContent = spfSlider.value; });
-followCb.addEventListener("change", () => { sim.followSwarm = followCb.checked; });
+viewSelect.addEventListener("change", () => { sim.viewMode = viewSelect.value; });
+function showFieldVel() {
+  const [vx, vy] = sim.fieldVel();
+  fsVal.textContent = sim.fieldSpeed.toFixed(2);
+  faVal.textContent = sim.fieldAngleDeg + "\u00b0";
+  fieldVelInfo.textContent = `v = (${vx.toFixed(2)}, ${vy.toFixed(2)}) per step`;
+}
+fsSlider.addEventListener("input", () => { sim.fieldSpeed = +fsSlider.value; showFieldVel(); });
+faSlider.addEventListener("input", () => { sim.fieldAngleDeg = +faSlider.value; showFieldVel(); });
 headingsCb.addEventListener("change", () => { sim.showHeadings = headingsCb.checked; });
 nuSlider.addEventListener("input", () => { sim.nu = +nuSlider.value; nuVal.textContent = sim.nu.toFixed(2); });
 
@@ -122,6 +133,9 @@ function restoreDefaults() {
   sim.oscPhaseYDeg = PARAMS.OSC_PHASE_Y_DEG; phaseSlider.value = sim.oscPhaseYDeg; phaseVal.textContent = sim.oscPhaseYDeg + "\u00b0";
   sim.oscCx = PARAMS.OSC_CX; cxSlider.value = sim.oscCx; cxVal.textContent = sim.oscCx.toFixed(1);
   sim.oscCy = PARAMS.OSC_CY; cySlider.value = sim.oscCy; cyVal.textContent = sim.oscCy.toFixed(1);
+  sim.fieldSpeed = PARAMS.FIELD_SPEED; fsSlider.value = sim.fieldSpeed;
+  sim.fieldAngleDeg = PARAMS.FIELD_ANGLE_DEG; faSlider.value = sim.fieldAngleDeg;
+  showFieldVel();
   rebuildLattice();
 }
 btnReset.addEventListener("click", () => {
@@ -131,7 +145,7 @@ btnReset.addEventListener("click", () => {
 btnRandom.addEventListener("click", () => sim.setup(+numAgents.value, false));
 numAgents.addEventListener("change", () => sim.setup(+numAgents.value, true));
 
-showAxis("x"); showAxis("y");
+showAxis("x"); showAxis("y"); showFieldVel();
 showStaticCount();
 
 /* ---------- animation loop ---------- */
@@ -141,14 +155,14 @@ function loop() {
   statusLine.textContent =
     `t = ${sim.t} | N = ${sim.N} | ${sim.nStatic} static + 1 oscillating target | ` +
     `f = (${sim.oscFreqX.toFixed(4)}, ${sim.oscFreqY.toFixed(4)}) cycles/step | ` +
-    `n = (${sim.oscRatioX.toFixed(2)}, ${sim.oscRatioY.toFixed(2)}) | \u03bd = ${sim.nu.toFixed(2)}`;
+    `n = (${sim.oscRatioX.toFixed(2)}, ${sim.oscRatioY.toFixed(2)}) | field v = ${sim.fieldSpeed.toFixed(2)} | \u03bd = ${sim.nu.toFixed(2)}`;
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
 /* ---------- matlab file viewer ---------- */
 const FILE_NOTES = {
-  "dynamics.m": "Main script. Target-field settings (lattice spacing in x and y, x/y oscillation frequencies, amplitudes, asymmetry) are at the top, and the oscWave function is at the bottom; then the VTP loop: Delaunay neighbors, repulsion + alignment + homing, Voronoi speed governor.",
+  "dynamics.m": "Main script. Target-field settings (lattice spacing in x and y, field translation speed, x/y oscillation frequencies, amplitudes, asymmetry) are at the top, and the oscWave function is at the bottom; then the VTP loop: Delaunay neighbors, repulsion + alignment + homing, Voronoi speed governor.",
   "Target.m": "Target class: target geometry and the homeToTarget homing-vector method. The lattice and the oscillating target are point components of one Target object.",
   "nearestOnSegment.m": "Geometry helper used internally by Target.m for segment-shaped targets.",
   "neighborhoods.m": "Delaunay-graph neighbors of every agent, plus each agent's nearest neighbor and its distance.",

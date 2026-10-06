@@ -22,6 +22,9 @@
        has its own frequency (cycles per time step), amplitude, and
        asymmetry ratio n (return stroke n times faster than the outgoing
        stroke), and y can be phase-shifted relative to x.
+   The WHOLE target field (the static lattice and the oscillating
+   target together) also TRANSLATES rigidly at a constant velocity: a
+   speed and a direction you choose live.
    Every agent homes toward whichever target (static or oscillating)
    is nearest to it.
    =========================================================== */
@@ -42,6 +45,8 @@ const PARAMS = {
   OSC_RATIO_X: 1,       // x asymmetry n: the return stroke is n times faster than the outgoing one (1 = symmetric)
   OSC_RATIO_Y: 1,       // y asymmetry n
   OSC_PHASE_Y_DEG: 90,  // y phase offset relative to x, degrees (90 with equal freqs and amps = circle)
+  FIELD_SPEED: 0.2,     // translation speed of the whole target field, units per time step (agents move at up to 1)
+  FIELD_ANGLE_DEG: 0,   // direction of that translation (0 = +x, 90 = +y)
   TRAIL_LEN: 600,       // how many past positions of the oscillating target are drawn
   POS_SEED: 2,          // same seeds the MATLAB script uses (rng(2), rng(18))
   ANG_SEED: 18,
@@ -166,8 +171,11 @@ class VTPSim {
     this.oscRatioX = PARAMS.OSC_RATIO_X;
     this.oscRatioY = PARAMS.OSC_RATIO_Y;
     this.oscPhaseYDeg = PARAMS.OSC_PHASE_Y_DEG;
+    this.fieldSpeed = PARAMS.FIELD_SPEED;
+    this.fieldAngleDeg = PARAMS.FIELD_ANGLE_DEG;
+    this.offX = 0; this.offY = 0;      // how far the whole field has translated from its starting place
     this.trail = [];
-    this.followSwarm = true;       // MATLAB: fixframe = false
+    this.viewMode = "swarm";       // "swarm" (MATLAB: fixframe = false) | "world" (fixed at the origin) | "field" (follows the moving field)
     this.showHeadings = true;
     this.stepsPerFrame = 1;
     this.paused = false;
@@ -192,14 +200,20 @@ class VTPSim {
     this.nStatic = (nx + 1) * (ny + 1);
   }
 
+  /* velocity of the translating field */
+  fieldVel() {
+    const a = (this.fieldAngleDeg * Math.PI) / 180;
+    return [this.fieldSpeed * Math.cos(a), this.fieldSpeed * Math.sin(a)];
+  }
+
   /* oscillating target: x and y each follow their own asymmetric waveform.
      phaseX / phaseY are in cycles and accumulate by freq each step, so
      changing a frequency live never makes the target jump. */
   oscPos() {
     const ux = this.phaseX, uy = this.phaseY + this.oscPhaseYDeg / 360;
     return [
-      this.oscCx + this.oscAmpX * oscWave(ux, this.oscRatioX),
-      this.oscCy + this.oscAmpY * oscWave(uy, this.oscRatioY),
+      this.offX + this.oscCx + this.oscAmpX * oscWave(ux, this.oscRatioX),
+      this.offY + this.oscCy + this.oscAmpY * oscWave(uy, this.oscRatioY),
     ];
   }
 
@@ -225,6 +239,8 @@ class VTPSim {
     this.t = 1;                                   // MATLAB loop index of the displayed state
     this.phaseX = this.oscFreqX * this.t;         // cycles
     this.phaseY = this.oscFreqY * this.t;
+    const [fvx, fvy] = this.fieldVel();           // field offset at step t is velocity * t
+    this.offX = fvx * this.t; this.offY = fvy * this.t;
     this.trail = [];
     this.cam = null;
     this.compute();
@@ -285,11 +301,12 @@ class VTPSim {
       let bestD2 = Infinity, hx = 0, hy = 0;
       const px = X[2 * i], py = X[2 * i + 1];
       {
-        // nearest lattice point: the lattice is rectangular, so round each axis independently
-        const H = this.gridHalf;
-        const ix = clamp(Math.round((px + H) / this.spX), 0, this.cellsX);
-        const iy = clamp(Math.round((py + H) / this.spY), 0, this.cellsY);
-        const dx = -H + ix * this.spX - px, dy = -H + iy * this.spY - py;
+        // nearest lattice point: the lattice is rectangular, so round each axis
+        // independently, in the frame that moves with the field
+        const H = this.gridHalf, qx = px - this.offX, qy = py - this.offY;
+        const ix = clamp(Math.round((qx + H) / this.spX), 0, this.cellsX);
+        const iy = clamp(Math.round((qy + H) / this.spY), 0, this.cellsY);
+        const dx = -H + ix * this.spX - qx, dy = -H + iy * this.spY - qy;
         bestD2 = dx * dx + dy * dy; hx = dx; hy = dy;
       }
       {
@@ -332,13 +349,15 @@ class VTPSim {
     this.t++;
     this.phaseX += this.oscFreqX;
     this.phaseY += this.oscFreqY;
+    const [fvx, fvy] = this.fieldVel();           // accumulates, so changing the speed live is smooth
+    this.offX += fvx; this.offY += fvy;
     this.compute();
   }
 
   updateCamera() {
     const N = this.N, X = this.X;
     let cx, cy, hw;
-    if (this.followSwarm) {
+    if (this.viewMode === "swarm") {
       // MATLAB: frame = center of mass +/- 3 * median radius
       let mx = 0, my = 0;
       for (let i = 0; i < N; i++) { mx += X[2 * i]; my += X[2 * i + 1]; }
@@ -348,7 +367,8 @@ class VTPSim {
       r.sort((a, b) => a - b);
       cx = mx; cy = my; hw = Math.max(3 * r[N >> 1], 4);
     } else {
-      cx = 0; cy = 0;
+      cx = this.viewMode === "field" ? this.offX : 0;
+      cy = this.viewMode === "field" ? this.offY : 0;
       hw = 1.15 * Math.max(this.gridHalf,
         Math.abs(this.oscCx) + this.oscAmpX, Math.abs(this.oscCy) + this.oscAmpY) + 2;
     }
@@ -393,7 +413,7 @@ class VTPSim {
     const xlo = cx - w / (2 * scale) - 1, xhi = cx + w / (2 * scale) + 1;
     const ylo = cy - h / (2 * scale) - 1, yhi = cy + h / (2 * scale) + 1;
     for (let k = 0; k < this.nStatic; k++) {
-      const gx = this.statics[2 * k], gy = this.statics[2 * k + 1];
+      const gx = this.statics[2 * k] + this.offX, gy = this.statics[2 * k + 1] + this.offY;
       if (gx < xlo || gx > xhi || gy < ylo || gy > yhi) continue;
       const [px, py] = toPx(gx, gy);
       ctx.fillRect(px - sq / 2, py - sq / 2, sq, sq);

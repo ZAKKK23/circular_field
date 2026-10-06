@@ -52,6 +52,16 @@ currently nearest to it.
   `n = 3` returns three times faster, `n < 1` returns slower. Both strokes are
   half-cosines, so the motion is smooth at the turning points.
 
+- **Translating field.** The whole field, meaning the static lattice and the
+  oscillating target (with its oscillation center), also moves rigidly at a
+  constant velocity, set by a **speed** (units per time step) and a
+  **direction** (degrees). At time `t` the field has shifted by
+  `speed * (cos(dir), sin(dir)) * t`, and the oscillation happens around the
+  moving center. Agents move at up to 1 unit per step, so a field speed below
+  about 1 can be followed. In the web version, the **view** menu has *follow
+  swarm*, *fixed (world)* (camera stays at the origin so you can watch the
+  field drift away) and *follow field*.
+
 Because agents choose the *nearest* target, the oscillating target mostly pulls
 in agents that are closer to it than to any lattice point. A larger lattice
 spacing or the oscillation amplitudes gives it a larger catchment area.
@@ -79,7 +89,8 @@ python3 -m http.server 8000
 then visit `http://localhost:8000/`. The live controls cover the number of
 agents, &nu;, the lattice spacing in x and y and the half-width, and, for the
 oscillating target, the frequency (slider or exact number), amplitude and
-return-speed ratio of each axis, the y phase offset, and the center.
+return-speed ratio of each axis, the y phase offset, and the center, plus the
+translation speed and direction of the whole field.
 
 ## Running the MATLAB version
 
@@ -104,6 +115,9 @@ osc_freq_y  = 0.01;
 osc_ratio_x = 1;         % asymmetry n: return stroke n times faster (1 = symmetric)
 osc_ratio_y = 1;
 osc_phase_y = 90;        % y phase offset relative to x, degrees
+
+field_speed = 0.2;       % translation speed of the whole field, units per time step
+field_angle = 0;         % direction of the translation, degrees (0 = +x)
 ```
 
 The lattice is plotted as grey squares and the oscillating target as a red
@@ -150,12 +164,14 @@ The browser port implements the same VTP model as `dynamics.m` (with
   script (2 and 18), but MATLAB's `rng` cannot be reproduced in JavaScript, so
   the exact starting positions (and therefore trajectories) differ from
   MATLAB's. The behavior is statistically the same.
-- The nearest static target is found by rounding the agent's position to the
-  rectangular lattice (exact, and much faster than scanning every lattice point).
+- The nearest static target is found by rounding the agent's position, taken
+  in the frame that moves with the field, to the rectangular lattice (exact, and much faster than scanning every lattice point).
   I checked it against a brute-force scan on 2000 random points with zero
   mismatches. The waveform `oscWave` was also checked to be exactly
   `sin(2*pi*u)` at `n = 1`, and to spend `n/(n+1)` of the period on the outgoing
   stroke.
+- In MATLAB the `Target` object is rebuilt every step (all components move with
+  the field), which replaces the single `setComponent` call used before.
 - Only `fdim = 1` is ported; the forward-area speed option (`fdim = 2`) is
   MATLAB-only.
 - The MATLAB script was not run in MATLAB while it was being written.

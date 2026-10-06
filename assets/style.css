@@ -189,3 +189,8 @@ footer{ text-align:center; color:var(--text-muted); font-size:.85rem; padding:2.
   width:5.5em; font-family:var(--mono); font-size:.85rem; color:var(--panel-text);
   background:#161a24; border:1px solid var(--panel-line); border-radius:5px; padding:.25rem .4rem;
 }
+
+.ctrl select{
+  font-family:var(--mono); font-size:.85rem; color:var(--panel-text);
+  background:#161a24; border:1px solid var(--panel-line); border-radius:5px; padding:.25rem .4rem;
+}

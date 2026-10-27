@@ -7,44 +7,43 @@ tmax = 1000;
 %% Target field parameters
 % STATIC targets: a rectangular lattice of point targets covering the plane
 % (window [-grid_half, grid_half]^2). The spacing is set separately in x
-% and in y. Every agent homes toward whichever target (static or
-% oscillating) is nearest to it.
+% and in y. Every agent homes toward whichever target (static lattice point
+% or the collector) is nearest to it, except agents stuck to the collector
+% (see below), which always home toward the collector.
 grid_half      = 50;
 grid_spacing_x = 5;      % one static target every grid_spacing_x units in x
 grid_spacing_y = 5;      % ... and every grid_spacing_y units in y
 
-% ONE OSCILLATING target that oscillates in BOTH x and y around osc_center:
-%     x(t) = osc_center(1) + osc_amp_x*oscWave(osc_freq_x*t,                   osc_ratio_x)
-%     y(t) = osc_center(2) + osc_amp_y*oscWave(osc_freq_y*t + osc_phase_y/360, osc_ratio_y)
-% Each axis has its own amplitude, FREQUENCY (cycles per time step, so the
-% period is 1/freq steps) and ASYMMETRY ratio. oscWave (bottom of this file)
-% goes up and comes back down once per period; the ratio n is how much
-% faster it comes back than it went: the outgoing stroke takes the fraction
-% n/(n+1) of the period and the return stroke 1/(n+1). n = 1 is a plain
-% sine, n = 3 returns three times faster, n < 1 returns slower.
-osc_center  = [0 0];     % center of the oscillation
-osc_amp_x   = 15;        % amplitude in x
-osc_amp_y   = 15;        % amplitude in y
-osc_freq_x  = 0.01;      % x frequency, cycles per time step (0.01 -> period of 100 steps)
-osc_freq_y  = 0.01;      % y frequency, cycles per time step
-osc_ratio_x = 1;         % x asymmetry n (return stroke n times faster; 1 = symmetric)
-osc_ratio_y = 1;         % y asymmetry n
-osc_phase_y = 90;        % y phase offset relative to x, in degrees (90 with equal freqs/amps = circle)
-% a frequency of 0 freezes that axis at its center
-
-% CIRCULAR MOTION of the WHOLE field: the static lattice and the oscillating
-% target (with its oscillation center) all move rigidly, so the field's
+% CIRCULAR MOTION of the static lattice: it moves rigidly, so that its
 % center travels on a circle of radius field_radius centered on the origin.
-% At time t the field center is at field_radius*[cos(theta) sin(theta)] with
-% theta = (field_speed/field_radius)*t, so one lap takes
+% At time t the lattice center is at field_radius*[cos(theta) sin(theta)]
+% with theta = (field_speed/field_radius)*t, so one lap takes
 % 2*pi*field_radius/field_speed steps.
 field_speed  = 0.2;      % speed along the circle, units per time step (agents move at up to 1); negative = clockwise
-field_radius = 20;       % radius of the circle (0 = the field stays put)
+field_radius = 20;       % radius of the circle (0 = the lattice stays put)
 if field_radius > 0
     field_omega = field_speed/field_radius;   % angular velocity, rad per step
 else
     field_omega = 0;
 end
+
+% ONE COLLECTOR target. It does not oscillate: it goes after the agents.
+%   - Capture: an agent that comes within capture_radius of the collector
+%     STICKS to it. A stuck agent homes toward the collector (instead of
+%     toward its nearest lattice target) until it drifts farther than
+%     release_radius, at which point it is released and may be re-captured.
+%   - Seeking: the collector moves toward the nearest agent that is not
+%     stuck, at up to collector_speed. Once every agent is stuck it moves
+%     to the centroid of the group and stays there.
+%   - Keeping them close: the collector slows down in proportion to how
+%     far the centroid of its stuck agents trails behind it, and stops
+%     when that lag reaches keep_close, so it never runs away from the
+%     agents it has collected. Its speed factor is max(0, 1 - lag/keep_close).
+collector_speed = 0.4;       % top speed of the collector, units per time step (agents move at up to 1)
+capture_radius  = 3;         % agents closer than this stick to the collector
+release_radius  = 25;        % stuck agents farther than this are released
+keep_close      = 5;         % lag of the stuck group's centroid at which the collector stops
+collector_start = [30 0];    % where the collector starts
 
 display=true;
 fixframe = false;
@@ -115,18 +114,20 @@ tar_ang = 2*pi/3;
 tar = Target({tar_rad*[1 0],tar_rad*[cos(tar_ang) sin(tar_ang)],tar_rad*[cos(2*tar_ang) sin(2*tar_ang)]});
 % tar = Target();
 
-% --- static lattice of point targets + one oscillating target ---------
+% --- static lattice of point targets + the collector ------------------
 [gx,gy] = meshgrid(-grid_half:grid_spacing_x:grid_half, -grid_half:grid_spacing_y:grid_half);
 staticPts = [gx(:) gy(:)];
 nStatic = size(staticPts,1);
-oscPos = @(t) osc_center + [ osc_amp_x*oscWave(osc_freq_x*t, osc_ratio_x), ...
-                             osc_amp_y*oscWave(osc_freq_y*t + osc_phase_y/360, osc_ratio_y) ];
-fieldOff = @(t) field_radius*[cos(field_omega*t) sin(field_omega*t)];   % where the field center is at time t
+fieldOff = @(t) field_radius*[cos(field_omega*t) sin(field_omega*t)];   % where the lattice center is at time t
+
+% collector state: its position and which agents are stuck to it
+cp    = collector_start;
+stuck = false(N,1);
 
 % components 1..nStatic are the lattice points; the LAST component is the
-% oscillating target. The Target is rebuilt every step below, because every
-% component moves with the field.
-comps = [ mat2cell(staticPts + fieldOff(0), ones(nStatic,1), 2); {oscPos(0) + fieldOff(0)} ];
+% collector. The Target is rebuilt every step below, because every
+% component moves.
+comps = [ mat2cell(staticPts + fieldOff(0), ones(nStatic,1), 2); {cp} ];
 tar = Target(comps);
 
 %% Preallocation of some intermediate variables
@@ -142,9 +143,33 @@ DT_t = cell(tmax,1);
 for t = 1:tmax
 %% Compute step
 
-% move the whole field around its circle and the oscillating target within it
+% --- collector: capture / release, then move ---------------------------
+dc = hypot(X(:,1)-cp(1), X(:,2)-cp(2));          % distance of every agent to the collector
+stuck = (stuck & dc <= release_radius) | (dc <= capture_radius);
+
+if any(stuck)
+    lag = norm(mean(X(stuck,:),1) - cp);         % how far the stuck group's centroid trails
+    throttle = max(0, 1 - lag/keep_close);       % slow down (down to 0) if they fall behind
+else
+    throttle = 1;
+end
+
+if any(~stuck)
+    Xf = X(~stuck,:);                            % seek the nearest agent that is not stuck yet
+    [~,kf] = min(hypot(Xf(:,1)-cp(1), Xf(:,2)-cp(2)));
+    goal = Xf(kf,:);
+else
+    goal = mean(X,1);                            % everyone is stuck: stay with the group
+end
+gvec  = goal - cp;
+gdist = norm(gvec);
+if gdist > 0
+    cp = cp + gvec/gdist * min(collector_speed*throttle, gdist);
+end
+
+% move the lattice around its circle; the collector is one more point target
 off = fieldOff(t);
-tar = Target([ mat2cell(staticPts + off, ones(nStatic,1), 2); {oscPos(t) + off} ]);
+tar = Target([ mat2cell(staticPts + off, ones(nStatic,1), 2); {cp} ]);
 
 DT = delaunayTriangulation(X);
 DT_t{t} = DT;
@@ -163,6 +188,7 @@ a = alignTo(U,nbhd,'expReciprocal');
 
 % homing
 h0 = homeToTarget(tar,X);
+h0(stuck,:) = cp - X(stuck,:);      % stuck agents always home toward the collector
 h = (1-s) .* h0./vecnorm(h0,2,2);   % rescale to length 1-s
 h(isnan(h)) = 0;                    % protect 0 entries
 
@@ -183,6 +209,7 @@ if display==true
     fig = figure(1);
     scatter(X(:,1), X(:,2), '.k');
     hold on
+    scatter(X(stuck,1), X(stuck,2), 14, [0.95 0.5 0.1], 'filled');   % agents stuck to the collector
     % triplot(DT,'b');
     % text(X(:,1),X(:,2),num2cell(1:N));
     
@@ -209,10 +236,11 @@ if display==true
         end
     end
     
-    % static lattice targets (grey) and the oscillating target (red)
+    % static lattice targets (grey), the collector (red) and its capture radius
     scatter(staticPts(:,1)+off(1), staticPts(:,2)+off(2), 25, [.5 .5 .5], 's');
-    po = oscPos(t) + off;
-    scatter(po(1), po(2), 80, 'r', 'filled');
+    scatter(cp(1), cp(2), 80, 'r', 'filled');
+    ang = linspace(0, 2*pi, 60);
+    plot(cp(1)+capture_radius*cos(ang), cp(2)+capture_radius*sin(ang), 'r:');
     
     
     hold off
@@ -236,7 +264,7 @@ if display==true
         frame = [com(1)-3*rmed com(1)+3*rmed com(2)-3*rmed com(2)+3*rmed];
     end
     axis(frame);
-    title(['$t=',num2str(t),',\; f_x=',num2str(osc_freq_x),',\; f_y=',num2str(osc_freq_y),',\; n=(',num2str(osc_ratio_x),',',num2str(osc_ratio_y),'),\; v_{field}=',num2str(field_speed),',\; R_{field}=',num2str(field_radius),'$'], 'Interpreter', 'Latex');
+    title(['$t=',num2str(t),',\; \mathrm{stuck}=',num2str(nnz(stuck)),',\; v_{col}=',num2str(collector_speed),',\; v_{field}=',num2str(field_speed),',\; R_{field}=',num2str(field_radius),'$'], 'Interpreter', 'Latex');
 end
 
 %% Update
@@ -258,23 +286,3 @@ end
 
 
 save("data.mat",'DT_t','U_t');
-
-
-%% Local functions
-function w = oscWave(u, n)
-% Asymmetric periodic waveform with values in [-1, 1].
-%   u : position in the cycle (any real number; only mod(u,1) matters)
-%   n : speed ratio. The outgoing stroke (-1 -> +1) takes the fraction
-%       p = n/(n+1) of the period and the return stroke (+1 -> -1) takes
-%       1-p, so the return is n times faster than the outgoing stroke.
-% Both strokes are half-cosines, so the motion is smooth at the turning
-% points. u = 0 is the midpoint of the outgoing stroke (w = 0, moving up),
-% and n = 1 gives exactly sin(2*pi*u).
-p = n/(n+1);
-v = mod(u + p/2, 1);
-if v < p
-    w = -cos(pi*v/p);
-else
-    w = cos(pi*(v-p)/(1-p));
-end
-end

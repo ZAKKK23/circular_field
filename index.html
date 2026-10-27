@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>plane-vtp-target-field — VTP simulation with a static target lattice and an asymmetric 2D oscillating target</title>
+<title>plane-vtp-target-field — VTP simulation with a circling target lattice and a collector target</title>
 <link rel="stylesheet" href="assets/style.css" />
 </head>
 <body>
@@ -19,13 +19,13 @@
   <!-- ================= ABOUT ================= -->
   <section id="view-about" class="view active">
     <h1 class="page-title">plane-vtp-target-field (Voronoi Topological Perception)</h1>
-    <p class="lede">The VTP agent model on the plane with a large lattice of static targets and one target that oscillates in x and y, with adjustable frequencies and asymmetric (fast-return) strokes, ported from MATLAB to a dependency-free browser build.</p>
+    <p class="lede">The VTP agent model on the plane with a large lattice of static targets that circles around the origin and one collector target that goes after the agents, picks them up and moves so as to keep them close, ported from MATLAB to a dependency-free browser build.</p>
 
     <div class="badge-row">
       <span class="badge">Voronoi Topological Perception</span>
       <span class="badge">Delaunay-neighbor repulsion + alignment + homing</span>
       <span class="badge">Voronoi-cell speed governor</span>
-      <span class="badge">static target lattice + 1 asymmetric x/y oscillating target</span>
+      <span class="badge">circling static target lattice + 1 collector target</span>
       <span class="badge">MATLAB + JS ports</span>
       <span class="badge">no build step</span>
     </div>
@@ -41,16 +41,18 @@
       <p>The agent then moves along that direction at a speed of tanh(l / L), where <em>l</em> is the distance from the agent to the boundary of its own Voronoi cell along its direction of motion. Crowded agents (small cells) slow down; agents on the edge of the group have an unbounded cell and move at full speed.</p>
 
       <h2>The target field</h2>
-      <p>The targets are all <em>point</em> targets, and every agent homes toward whichever one is currently nearest to it:</p>
+      <p>The targets are all <em>point</em> targets, and every agent homes toward whichever one is currently nearest to it, except agents stuck to the collector (below):</p>
       <ul>
         <li><strong>Static targets</strong> form a rectangular lattice that covers the plane over [&minus;H, H]&sup2; (by default H = 50), with a <strong>spacing in x</strong> and a <strong>spacing in y</strong> that you choose independently. H and both spacings are adjustable live.</li>
-        <li><strong>One oscillating target</strong> that oscillates in <strong>both x and y</strong> around a chosen center:
-          <div class="formula">x(t) = c<sub>x</sub> + A<sub>x</sub> &middot; w( f<sub>x</sub>&middot;t , n<sub>x</sub> )<br />y(t) = c<sub>y</sub> + A<sub>y</sub> &middot; w( f<sub>y</sub>&middot;t + &phi;/360 , n<sub>y</sub> )</div>
-          Each axis has its own <strong>amplitude A</strong>, <strong>frequency f</strong> (cycles per time step, so the period is 1/f steps) and <strong>asymmetry ratio n</strong>. The y axis can also be shifted by a <strong>phase offset &phi;</strong> in degrees. With equal frequencies and amplitudes, &phi; = 90&deg; and n = 1, the target travels on a circle; with different frequencies it traces a Lissajous curve.</li>
-        <li><strong>Asymmetric strokes.</strong> The waveform <em>w</em> goes up and comes back down in one period, and the ratio <strong>n</strong> sets how fast it comes back: the outgoing stroke takes the fraction n/(n+1) of the period and the return stroke the fraction 1/(n+1), so the return is <strong>n times faster</strong> than the way out. n = 1 is a plain sine, n = 3 makes the return three times faster, and n &lt; 1 makes the return slower. Both strokes are half-cosines, so the motion is smooth at the turning points. The slider readout shows how many steps each stroke takes.</li>
+        <li><strong>The lattice goes around a circle.</strong> It moves rigidly, so its center travels on a circle centered on the origin. You choose the <strong>radius</strong> R of the circle and the <strong>speed</strong> along it (in units per time step; a negative speed goes clockwise). The lattice center is at R&middot;(cos&nbsp;&theta;, sin&nbsp;&theta;) with &theta; = (speed / R) &middot; t, so one lap takes 2&pi;R / speed steps. R = 0 keeps the lattice still. Agents move at up to 1 unit per step, so a speed below about 1 can be followed.</li>
+        <li><strong>One collector target</strong> that does not oscillate: it goes after the agents.
+          <ul>
+            <li><strong>Capture.</strong> An agent that comes within the <strong>capture radius</strong> of the collector <em>sticks</em> to it. A stuck agent homes toward the collector instead of toward its nearest lattice target, until it drifts farther than the <strong>release radius</strong>, when it lets go (and can be captured again). Stuck agents are drawn in orange.</li>
+            <li><strong>Seeking.</strong> The collector moves toward the nearest agent that is not stuck yet, at up to its <strong>speed</strong>. When every agent is stuck it moves to the centroid of the group and stays there.</li>
+            <li><strong>Keeping them close.</strong> The collector slows down as the centroid of its stuck agents trails behind it, with speed factor max(0, 1 &minus; lag / keep-close). It stops when the lag reaches the <strong>keep-close</strong> distance, so it never runs off and leaves the agents it has collected behind, and it speeds up again as they catch up.</li>
+          </ul></li>
       </ul>
-      <p>The <strong>whole field goes around a circle</strong>: the static lattice and the oscillating target (together with its oscillation center) move rigidly, so the field's center travels on a circle centered on the origin. You choose the <strong>radius</strong> R of the circle and the <strong>speed</strong> along it (in units per time step; a negative speed goes clockwise). The field center is at R&middot;(cos&nbsp;&theta;, sin&nbsp;&theta;) with &theta; = (speed / R) &middot; t, so one lap takes 2&pi;R / speed steps, and the oscillation happens around that moving center. R = 0 keeps the field still. Agents move at up to 1 unit per step, so a speed below about 1 can be followed. The view menu offers <em>follow swarm</em>, <em>fixed (world)</em>, which keeps the camera at the origin so you can watch the field circle around it, and <em>follow field</em>.</p>
-      <p>Because agents choose the nearest target, the oscillating target mostly pulls in agents that are closer to it than to any lattice point. Raising the lattice spacing or the oscillation amplitudes gives it a larger catchment area.</p>
+      <p>The view menu offers <em>follow swarm</em>, <em>fixed (world)</em>, which keeps the camera at the origin so you can watch the lattice circle around it, and <em>follow field</em>, which keeps the camera on the lattice.</p>
 
       <h2>Two implementations, one model</h2>
       <ul>
@@ -126,7 +128,7 @@
           <span class="ctrl" id="staticCount"></span>
         </div>
         <div class="global-row">
-          <span class="label">Field motion</span>
+          <span class="label">Lattice motion</span>
           <div class="ctrl">Speed (&lt;0 = clockwise):
             <input type="range" id="fsSlider" min="-1.5" max="1.5" step="0.01" value="0.2" />
             <span class="readout" id="fsVal">0.20</span>
@@ -137,54 +139,36 @@
           </div>
           <span class="ctrl readout wide" id="fieldVelInfo"></span>
         </div>
-        <div class="target-rows">
-          <div class="target-row">
-            <span class="tname" style="color:#f2685f">Osc. x</span>
-            <div class="ctrl">Frequency:
-              <input type="range" id="freqSlider_x" min="0" max="0.1" step="0.0005" value="0.01" />
-              <input type="number" id="freqNum_x" class="numbox" min="0" max="1" step="0.001" value="0.01" />
-            </div>
-            <div class="ctrl">Amplitude:
-              <input type="range" id="ampSlider_x" min="0" max="60" step="0.5" value="15" />
-              <span class="readout" id="ampVal_x">15.0</span>
-            </div>
-            <div class="ctrl">Return speed n&times;:
-              <input type="range" id="ratioSlider_x" min="0.2" max="8" step="0.05" value="1" />
-              <span class="readout" id="ratioVal_x">1.00</span>
-            </div>
-            <span class="ctrl readout wide" id="axisInfo_x"></span>
+        <div class="global-row">
+          <span class="label" style="color:#f2685f">Collector</span>
+          <div class="ctrl">Speed:
+            <input type="range" id="csSlider" min="0" max="1.5" step="0.01" value="0.4" />
+            <span class="readout" id="csVal">0.40</span>
           </div>
-          <div class="target-row">
-            <span class="tname" style="color:#f2685f">Osc. y</span>
-            <div class="ctrl">Frequency:
-              <input type="range" id="freqSlider_y" min="0" max="0.1" step="0.0005" value="0.01" />
-              <input type="number" id="freqNum_y" class="numbox" min="0" max="1" step="0.001" value="0.01" />
-            </div>
-            <div class="ctrl">Amplitude:
-              <input type="range" id="ampSlider_y" min="0" max="60" step="0.5" value="15" />
-              <span class="readout" id="ampVal_y">15.0</span>
-            </div>
-            <div class="ctrl">Return speed n&times;:
-              <input type="range" id="ratioSlider_y" min="0.2" max="8" step="0.05" value="1" />
-              <span class="readout" id="ratioVal_y">1.00</span>
-            </div>
-            <div class="ctrl">Phase offset &phi;:
-              <input type="range" id="phaseSlider" min="0" max="360" step="1" value="90" />
-              <span class="readout" id="phaseVal">90&deg;</span>
-            </div>
-            <span class="ctrl readout wide" id="axisInfo_y"></span>
+          <div class="ctrl">Capture radius:
+            <input type="range" id="capSlider" min="0.5" max="12" step="0.5" value="3" />
+            <span class="readout" id="capVal">3.0</span>
           </div>
-          <div class="target-row">
-            <span class="tname" style="color:#f2685f">Center</span>
-            <div class="ctrl">x:
-              <input type="range" id="cxSlider" min="-60" max="60" step="0.5" value="0" />
-              <span class="readout" id="cxVal">0.0</span>
-            </div>
-            <div class="ctrl">y:
-              <input type="range" id="cySlider" min="-60" max="60" step="0.5" value="0" />
-              <span class="readout" id="cyVal">0.0</span>
-            </div>
+          <div class="ctrl">Release radius:
+            <input type="range" id="relSlider" min="5" max="80" step="1" value="25" />
+            <span class="readout" id="relVal">25</span>
           </div>
+          <div class="ctrl">Keep-close:
+            <input type="range" id="keepSlider" min="0.5" max="30" step="0.5" value="5" />
+            <span class="readout" id="keepVal">5.0</span>
+          </div>
+        </div>
+        <div class="global-row">
+          <span class="label" style="color:#f2685f">Collector start</span>
+          <div class="ctrl">x:
+            <input type="range" id="sxSlider" min="-80" max="80" step="1" value="30" />
+            <span class="readout" id="sxVal">30</span>
+          </div>
+          <div class="ctrl">y:
+            <input type="range" id="sySlider" min="-80" max="80" step="1" value="0" />
+            <span class="readout" id="syVal">0</span>
+          </div>
+          <span class="ctrl readout wide" id="stuckInfo"></span>
         </div>
       </div>
     </div>
@@ -199,8 +183,8 @@
       <p>Requires MATLAB with the base product plus the functions it already uses for geometry (<code>delaunayTriangulation</code>, <code>voronoiDiagram</code>, <code>polyxpoly</code>, <code>polyshape</code>). Run:</p>
       <div class="formula">cd matlab<br />matlab -r dynamics</div>
       <p>...or open <code>dynamics.m</code> in the MATLAB editor and run it. All the target-field settings are at the top of the file:</p>
-      <div class="formula"><span class="k">grid_half</span>, <span class="k">grid_spacing_x</span>, <span class="k">grid_spacing_y</span>   % static lattice window and x/y spacing<br /><span class="k">osc_freq_x</span>, <span class="k">osc_freq_y</span>   % oscillation frequencies, cycles per time step<br /><span class="k">osc_amp_x</span>, <span class="k">osc_amp_y</span>, <span class="k">osc_center</span>   % amplitudes and center<br /><span class="k">osc_ratio_x</span>, <span class="k">osc_ratio_y</span>   % asymmetry: return stroke n times faster<br /><span class="k">osc_phase_y</span>   % y phase offset, degrees<br /><span class="k">field_speed</span>, <span class="k">field_radius</span>   % speed and circle radius of the whole field's circular motion</div>
-      <p>The static lattice is plotted as grey squares and the oscillating target as a red dot.</p>
+      <div class="formula"><span class="k">grid_half</span>, <span class="k">grid_spacing_x</span>, <span class="k">grid_spacing_y</span>   % static lattice window and x/y spacing<br /><span class="k">field_speed</span>, <span class="k">field_radius</span>   % speed and circle radius of the lattice's circular motion<br /><span class="k">collector_speed</span>   % top speed of the collector<br /><span class="k">capture_radius</span>, <span class="k">release_radius</span>   % agents stick inside the first, let go beyond the second<br /><span class="k">keep_close</span>   % lag of the stuck group's centroid at which the collector stops<br /><span class="k">collector_start</span>   % where the collector starts</div>
+      <p>The static lattice is plotted as grey squares, the collector as a red dot with its capture radius dotted, and the agents stuck to it in orange.</p>
       <p>The folder holds <code>dynamics.m</code> and the files it depends on: <code>Target.m</code> and <code>nearestOnSegment.m</code> (target geometry and homing vectors), <code>neighborhoods.m</code> (Delaunay neighbors and the nearest neighbor), <code>transition.m</code> (the smooth cutoff function), <code>alignTo.m</code> (alignment), <code>voronoiProjectToBoundary.m</code> (distance to the Voronoi cell boundary, used for the speed governor), and <code>voronoiForwardArea.m</code> with <code>poly_area.m</code> (only needed if you switch <code>fdim</code> to 2).</p>
     </div>
 

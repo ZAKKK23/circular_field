@@ -17,16 +17,16 @@
        slow down, agents on the hull move at full speed).
    TARGET FIELD (the scenario this repo is about):
      - a rectangular lattice of STATIC point targets across the plane,
-       with independent spacing in x and in y
-     - ONE oscillating target that oscillates in BOTH x and y. Each axis
-       has its own frequency (cycles per time step), amplitude, and
-       asymmetry ratio n (return stroke n times faster than the outgoing
-       stroke), and y can be phase-shifted relative to x.
-   The WHOLE target field (the static lattice and the oscillating
-   target together) also moves rigidly around a CIRCLE centered on the
-   origin, with a radius and a speed (along the circle) you choose live.
-   Negative speed circulates clockwise; radius 0 keeps the field still.
-   Every agent homes toward whichever target (static or oscillating)
+       with independent spacing in x and in y, that moves rigidly around a
+       circle centered on the origin (radius and speed you choose live)
+     - ONE COLLECTOR target that does not oscillate: it goes after the
+       agents. An agent that comes within the capture radius STICKS to it
+       and from then on homes toward it (until it drifts past the release
+       radius). The collector seeks the nearest agent that is not stuck,
+       and slows down as the centroid of its stuck agents trails behind
+       it (stopping when the lag reaches the keep-close distance), so it
+       moves in a way that keeps its collected agents close.
+   Every other agent homes toward whichever target (static or collector)
    is nearest to it.
    =========================================================== */
 
@@ -37,18 +37,15 @@ const PARAMS = {
   GRID_HALF: 50,        // static lattice covers [-GRID_HALF, GRID_HALF]^2
   GRID_SPACING_X: 5,    // one static target every GRID_SPACING_X units in x
   GRID_SPACING_Y: 5,    // ... and every GRID_SPACING_Y units in y
-  OSC_CX: 0,            // center of the oscillation
-  OSC_CY: 0,
-  OSC_AMP_X: 15,        // amplitude of the x oscillation
-  OSC_AMP_Y: 15,        // amplitude of the y oscillation
-  OSC_FREQ_X: 0.01,     // x frequency, cycles per time step (period = 1/freq steps)
-  OSC_FREQ_Y: 0.01,     // y frequency, cycles per time step
-  OSC_RATIO_X: 1,       // x asymmetry n: the return stroke is n times faster than the outgoing one (1 = symmetric)
-  OSC_RATIO_Y: 1,       // y asymmetry n
-  OSC_PHASE_Y_DEG: 90,  // y phase offset relative to x, degrees (90 with equal freqs and amps = circle)
+  COLLECTOR_SPEED: 0.4, // top speed of the collector, units per time step (agents move at up to 1)
+  CAPTURE_RADIUS: 3,    // agents closer than this to the collector stick to it
+  RELEASE_RADIUS: 25,   // stuck agents farther than this are released
+  KEEP_CLOSE: 5,        // lag of the stuck group's centroid at which the collector stops
+  COLLECTOR_X0: 30,     // where the collector starts
+  COLLECTOR_Y0: 0,
   FIELD_SPEED: 0.2,     // speed of the whole target field along its circle, units per time step (agents move at up to 1); negative = clockwise
   FIELD_RADIUS: 20,     // radius of the circle the field center moves on (0 = field stays put)
-  TRAIL_LEN: 600,       // how many past positions of the oscillating target are drawn
+  TRAIL_LEN: 600,       // how many past positions of the collector are drawn
   POS_SEED: 2,          // same seeds the MATLAB script uses (rng(2), rng(18))
   ANG_SEED: 18,
 };
@@ -64,20 +61,6 @@ function mulberry32(seed) {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
-}
-
-/* Asymmetric periodic waveform in [-1, 1] (oscWave in dynamics.m).
-   u = position in the cycle (any real number, taken mod 1). n = speed ratio:
-   the outgoing stroke (-1 -> +1) takes the fraction p = n/(n+1) of the
-   period and the return stroke (+1 -> -1) takes 1 - p, so the return is n
-   times faster than the outgoing stroke. Both strokes are half-cosines, so
-   the motion is smooth at the turning points. u = 0 is the midpoint of the
-   outgoing stroke (w = 0, moving up), and n = 1 is exactly sin(2*pi*u). */
-function oscWave(u, n) {
-  const p = n / (n + 1);
-  let v = u + p / 2;
-  v -= Math.floor(v);
-  return v < p ? -Math.cos((Math.PI * v) / p) : Math.cos((Math.PI * (v - p)) / (1 - p));
 }
 
 /* transition.m, 'expReciprocal': smooth step, 1 at x=0 and exactly 0 for x>=1 */
@@ -163,15 +146,14 @@ class VTPSim {
     this.gridHalf = PARAMS.GRID_HALF;
     this.gridSpacingX = PARAMS.GRID_SPACING_X;
     this.gridSpacingY = PARAMS.GRID_SPACING_Y;
-    this.oscCx = PARAMS.OSC_CX;
-    this.oscCy = PARAMS.OSC_CY;
-    this.oscAmpX = PARAMS.OSC_AMP_X;
-    this.oscAmpY = PARAMS.OSC_AMP_Y;
-    this.oscFreqX = PARAMS.OSC_FREQ_X;
-    this.oscFreqY = PARAMS.OSC_FREQ_Y;
-    this.oscRatioX = PARAMS.OSC_RATIO_X;
-    this.oscRatioY = PARAMS.OSC_RATIO_Y;
-    this.oscPhaseYDeg = PARAMS.OSC_PHASE_Y_DEG;
+    this.collectorSpeed = PARAMS.COLLECTOR_SPEED;
+    this.captureRadius = PARAMS.CAPTURE_RADIUS;
+    this.releaseRadius = PARAMS.RELEASE_RADIUS;
+    this.keepClose = PARAMS.KEEP_CLOSE;
+    this.startX = PARAMS.COLLECTOR_X0;
+    this.startY = PARAMS.COLLECTOR_Y0;
+    this.colX = this.startX; this.colY = this.startY;
+    this.nStuck = 0;
     this.fieldSpeed = PARAMS.FIELD_SPEED;
     this.fieldRadius = PARAMS.FIELD_RADIUS;
     this.fieldTheta = 0;               // angle of the field center on its circle (radians)
@@ -213,15 +195,50 @@ class VTPSim {
     this.offY = this.fieldRadius * Math.sin(this.fieldTheta);
   }
 
-  /* oscillating target: x and y each follow their own asymmetric waveform.
-     phaseX / phaseY are in cycles and accumulate by freq each step, so
-     changing a frequency live never makes the target jump. */
-  oscPos() {
-    const ux = this.phaseX, uy = this.phaseY + this.oscPhaseYDeg / 360;
-    return [
-      this.offX + this.oscCx + this.oscAmpX * oscWave(ux, this.oscRatioX),
-      this.offY + this.oscCy + this.oscAmpY * oscWave(uy, this.oscRatioY),
-    ];
+  /* put the collector back at its start position and release every agent */
+  resetCollector() {
+    this.colX = this.startX; this.colY = this.startY;
+    if (!this.stuck || this.stuck.length !== this.N) this.stuck = new Uint8Array(this.N);
+    else this.stuck.fill(0);
+    this.nStuck = 0;
+    this.trail = [];
+  }
+
+  /* collector: capture / release, then move (the top of one MATLAB loop iteration).
+       stuck = (stuck & dist <= releaseRadius) | (dist <= captureRadius)
+     Then it moves toward the nearest agent that is not stuck, at up to
+     collectorSpeed * throttle, where throttle = max(0, 1 - lag/keepClose) and
+     lag is how far the centroid of the stuck agents trails the collector. If every
+     agent is stuck it moves to the centroid of the group and stays there. */
+  updateCollector() {
+    const N = this.N, X = this.X, stuck = this.stuck;
+    const cx = this.colX, cy = this.colY;
+    let n = 0, sx = 0, sy = 0, mx = 0, my = 0, bestD2 = Infinity, bi = -1;
+    for (let i = 0; i < N; i++) {
+      const x = X[2 * i], y = X[2 * i + 1];
+      const dx = x - cx, dy = y - cy;
+      const d2 = dx * dx + dy * dy, d = Math.sqrt(d2);
+      const st = (stuck[i] === 1 && d <= this.releaseRadius) || d <= this.captureRadius;
+      stuck[i] = st ? 1 : 0;
+      mx += x; my += y;
+      if (st) { n++; sx += x; sy += y; }
+      else if (d2 < bestD2) { bestD2 = d2; bi = i; }
+    }
+    this.nStuck = n;
+    let throttle = 1;
+    if (n > 0) {
+      const lag = Math.hypot(sx / n - cx, sy / n - cy);
+      throttle = Math.max(0, 1 - lag / Math.max(this.keepClose, 1e-9));
+    }
+    let gx, gy;
+    if (bi >= 0) { gx = X[2 * bi]; gy = X[2 * bi + 1]; }
+    else { gx = mx / N; gy = my / N; }
+    const vx = gx - cx, vy = gy - cy, dist = Math.hypot(vx, vy);
+    if (dist > 0) {
+      const step = Math.min(this.collectorSpeed * throttle, dist);
+      this.colX = cx + (vx / dist) * step;
+      this.colY = cy + (vy / dist) * step;
+    }
   }
 
   /* new run. seeded = true reproduces the MATLAB-style fixed seeds. */
@@ -244,23 +261,21 @@ class VTPSim {
       this.U[2 * i + 1] = Math.sin(ang);
     }
     this.t = 1;                                   // MATLAB loop index of the displayed state
-    this.phaseX = this.oscFreqX * this.t;         // cycles
-    this.phaseY = this.oscFreqY * this.t;
     this.fieldTheta = this.fieldOmega() * this.t; // field angle at step t is omega * t
     this.updateFieldOffset();
-    this.trail = [];
     this.cam = null;
+    this.resetCollector();
     this.compute();
     if (this.onSetupChange) this.onSetupChange();
   }
 
   /* one MATLAB loop iteration up to (not including) the position update:
-     moves the oscillating target, then computes U1 (desired direction)
+     moves the collector, then computes U1 (desired direction)
      and Unext (= tanh(l/L) * U1) for the current positions. */
   compute() {
     const N = this.N, X = this.X, L = this.L, nu = this.nu;
-    const [ox, oy] = this.oscPos();
-    this.oscX = ox; this.oscY = oy;
+    this.updateCollector();
+    const ox = this.colX, oy = this.colY;
     this.trail.push(ox, oy);
     if (this.trail.length > 2 * PARAMS.TRAIL_LEN) this.trail.splice(0, this.trail.length - 2 * PARAMS.TRAIL_LEN);
 
@@ -321,6 +336,7 @@ class VTPSim {
         const d2 = dx * dx + dy * dy;
         if (d2 < bestD2) { bestD2 = d2; hx = dx; hy = dy; }
       }
+      if (this.stuck[i]) { hx = ox - px; hy = oy - py; }   // stuck agents always home toward the collector
       const hn = Math.hypot(hx, hy);
       if (hn > 0) { hx = ((1 - s[i]) * hx) / hn; hy = ((1 - s[i]) * hy) / hn; } else { hx = 0; hy = 0; }
 
@@ -349,13 +365,11 @@ class VTPSim {
     }
   }
 
-  /* apply the position update, advance time and the oscillation phase, compute the next step */
+  /* apply the position update, advance time and the field, compute the next step */
   step() {
     const N = this.N;
     for (let i = 0; i < 2 * N; i++) { this.X[i] += this.Unext[i]; this.U[i] = this.Unext[i]; }
     this.t++;
-    this.phaseX += this.oscFreqX;
-    this.phaseY += this.oscFreqY;
     this.fieldTheta += this.fieldOmega();         // accumulates, so changing the speed live is smooth
     this.updateFieldOffset();
     this.compute();
@@ -377,9 +391,7 @@ class VTPSim {
       const following = this.viewMode === "field";
       cx = following ? this.offX : 0;
       cy = following ? this.offY : 0;
-      const base = Math.max(this.gridHalf,
-        Math.abs(this.oscCx) + this.oscAmpX, Math.abs(this.oscCy) + this.oscAmpY);
-      hw = 1.15 * (base + (following ? 0 : this.fieldRadius)) + 2;
+      hw = 1.15 * (this.gridHalf + (following ? 0 : this.fieldRadius)) + 2;
     }
     if (!this.cam) this.cam = { cx, cy, hw };
     const a = 0.08;
@@ -403,7 +415,7 @@ class VTPSim {
     const scale = Math.min(w, h) / (2 * hw);
     const toPx = (x, y) => [w / 2 + (x - cx) * scale, h / 2 - (y - cy) * scale];
 
-    // recent trail of the oscillating target
+    // recent trail of the collector
     {
       const tr = this.trail;
       if (tr.length >= 4) {
@@ -428,9 +440,12 @@ class VTPSim {
       ctx.fillRect(px - sq / 2, py - sq / 2, sq, sq);
     }
 
-    // oscillating target
+    // collector: capture radius ring + marker
     {
-      const [px, py] = toPx(this.oscX, this.oscY);
+      const [px, py] = toPx(this.colX, this.colY);
+      ctx.strokeStyle = "rgba(242,104,95,0.6)"; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.arc(px, py, Math.max(this.captureRadius * scale, 3), 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
       ctx.fillStyle = "rgba(242,104,95,0.25)";
       ctx.beginPath(); ctx.arc(px, py, 14, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = "#f2685f";
@@ -449,12 +464,15 @@ class VTPSim {
       }
       ctx.globalAlpha = 1;
     }
-    ctx.fillStyle = "#f4f5f7";
-    for (let i = 0; i < N; i++) {
-      const [px, py] = toPx(this.X[2 * i], this.X[2 * i + 1]);
-      ctx.beginPath(); ctx.arc(px, py, 2, 0, Math.PI * 2); ctx.fill();
+    for (let pass = 0; pass < 2; pass++) {          // free agents white, stuck agents orange
+      ctx.fillStyle = pass === 0 ? "#f4f5f7" : "#f5a33b";
+      for (let i = 0; i < N; i++) {
+        if ((this.stuck[i] === 1) !== (pass === 1)) continue;
+        const [px, py] = toPx(this.X[2 * i], this.X[2 * i + 1]);
+        ctx.beginPath(); ctx.arc(px, py, pass === 1 ? 2.6 : 2, 0, Math.PI * 2); ctx.fill();
+      }
     }
   }
 }
 
-if (typeof module !== "undefined") module.exports = { VTPSim, PARAMS, delaunayNeighbors, expReciprocal, oscWave };
+if (typeof module !== "undefined") module.exports = { VTPSim, PARAMS, delaunayNeighbors, expReciprocal };

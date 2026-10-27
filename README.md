@@ -1,9 +1,9 @@
 # plane-vtp-target-field (Voronoi Topological Perception)
 
 The VTP agent model on the plane with a **large lattice of static targets**
-(independent x and y spacing) and **one target that oscillates in x and y**,
-with adjustable frequencies and **asymmetric strokes** (fast return), as a
-MATLAB model and a dependency-free browser port of the same dynamics.
+that **circles around the origin** and **one collector target** that goes after
+the agents, picks them up and moves so as to keep them close, as a MATLAB model
+and a dependency-free browser port of the same dynamics.
 
 **[Live site →](#)** (enable GitHub Pages, see below)
 
@@ -28,45 +28,35 @@ Agents follow the Voronoi Topological Perception (VTP) model:
 ### The target field
 
 All targets are point targets, and each agent homes toward whichever one is
-currently nearest to it.
+currently nearest to it, except agents stuck to the collector (below).
 
 - **Static targets** form a rectangular lattice covering `[-H, H]^2`, with a
   spacing in x and a spacing in y that you choose independently (defaults:
   `H = 50`, spacing 5 in both, i.e. 441 targets).
-- **One oscillating target** oscillates in **both x and y** around a center:
+- **The lattice goes around a circle.** It moves rigidly so that its center
+  travels on a circle centered on the origin. You choose the **radius** `R` of
+  the circle and the **speed** along it (units per time step; negative =
+  clockwise). At time `t` the lattice center is at `R * (cos(theta), sin(theta))`
+  with `theta = (speed / R) * t`, so one lap takes `2*pi*R / speed` steps.
+  `R = 0` keeps the lattice still. Agents move at up to 1 unit per step, so a
+  speed below about 1 can be followed.
+- **One collector target**, which does not oscillate. It goes after the agents:
+  - **Capture.** An agent that comes within `capture_radius` of the collector
+    *sticks* to it. A stuck agent homes toward the collector instead of toward
+    its nearest lattice target, until it drifts farther than `release_radius`,
+    when it lets go (and can be captured again).
+  - **Seeking.** The collector moves toward the nearest agent that is not stuck
+    yet, at up to `collector_speed`. When every agent is stuck it moves to the
+    centroid of the group and stays there.
+  - **Keeping them close.** The collector slows down as the centroid of its
+    stuck agents trails behind it: its speed factor is
+    `max(0, 1 - lag / keep_close)`. It stops when the lag reaches `keep_close`,
+    so it never runs off and leaves the agents it has collected behind, and it
+    speeds up again as they catch up.
 
-  ```
-  x(t) = cx + Ax * w( fx*t,                 nx )
-  y(t) = cy + Ay * w( fy*t + phase/360,     ny )
-  ```
-
-  Each axis has its own amplitude `A`, frequency `f` (cycles per time step, so
-  the period is 1 / f steps) and asymmetry ratio `n`; y can be phase-shifted
-  relative to x. With equal frequencies and amplitudes, a 90 degree phase offset
-  and `n = 1` the target travels on a circle; with different frequencies it
-  traces a Lissajous curve. A frequency of 0 freezes that axis.
-- **Asymmetric strokes.** The waveform `w` goes up and comes back down once per
-  period. The ratio `n` sets how fast it comes back: the outgoing stroke takes
-  the fraction `n/(n+1)` of the period and the return stroke `1/(n+1)`, so the
-  return is **`n` times faster** than the way out. `n = 1` is a plain sine,
-  `n = 3` returns three times faster, `n < 1` returns slower. Both strokes are
-  half-cosines, so the motion is smooth at the turning points.
-
-- **Field moving on a circle.** The whole field, meaning the static lattice and
-  the oscillating target (with its oscillation center), moves rigidly so that
-  its center travels on a circle centered on the origin. You choose the
-  **radius** `R` of the circle and the **speed** along it (units per time step;
-  negative = clockwise). At time `t` the field center is at
-  `R * (cos(theta), sin(theta))` with `theta = (speed / R) * t`, so one lap takes
-  `2*pi*R / speed` steps, and the oscillation happens around the moving center.
-  `R = 0` keeps the field still. Agents move at up to 1 unit per step, so a speed
-  below about 1 can be followed. In the web version, the **view** menu has
-  *follow swarm*, *fixed (world)* (camera stays at the origin so you can watch
-  the field circle around it) and *follow field*.
-
-Because agents choose the *nearest* target, the oscillating target mostly pulls
-in agents that are closer to it than to any lattice point. A larger lattice
-spacing or the oscillation amplitudes gives it a larger catchment area.
+In the web version, the **view** menu has *follow swarm*, *fixed (world)* (the
+camera stays at the origin so you can watch the lattice circle around it) and
+*follow field*. Stuck agents are drawn in orange.
 
 ## Structure
 
@@ -89,10 +79,9 @@ python3 -m http.server 8000
 ```
 
 then visit `http://localhost:8000/`. The live controls cover the number of
-agents, &nu;, the lattice spacing in x and y and the half-width, and, for the
-oscillating target, the frequency (slider or exact number), amplitude and
-return-speed ratio of each axis, the y phase offset, and the center, plus the
-circular-motion speed and radius of the whole field.
+agents, &nu;, the lattice spacing in x and y and the half-width, the speed and
+radius of the lattice's circular motion, and the collector's speed, capture
+radius, release radius, keep-close distance and start position.
 
 ## Running the MATLAB version
 
@@ -109,22 +98,20 @@ grid_half      = 50;     % static lattice covers [-grid_half, grid_half]^2
 grid_spacing_x = 5;      % one static target every grid_spacing_x units in x
 grid_spacing_y = 5;      % ... and every grid_spacing_y units in y
 
-osc_center  = [0 0];     % center of the oscillation
-osc_amp_x   = 15;        % amplitudes
-osc_amp_y   = 15;
-osc_freq_x  = 0.01;      % frequencies, cycles per time step   <-- choose these
-osc_freq_y  = 0.01;
-osc_ratio_x = 1;         % asymmetry n: return stroke n times faster (1 = symmetric)
-osc_ratio_y = 1;
-osc_phase_y = 90;        % y phase offset relative to x, degrees
+field_speed  = 0.2;      % speed of the lattice along its circle, units per time step (negative = clockwise)
+field_radius = 20;       % radius of that circle (0 = lattice stays put)
 
-field_speed  = 0.2;      % speed of the whole field along its circle, units per time step (negative = clockwise)
-field_radius = 20;       % radius of that circle (0 = field stays put)
+collector_speed = 0.4;   % top speed of the collector, units per time step
+capture_radius  = 3;     % agents closer than this stick to the collector
+release_radius  = 25;    % stuck agents farther than this let go
+keep_close      = 5;     % lag of the stuck group's centroid at which the collector stops
+collector_start = [30 0];
 ```
 
-The lattice is plotted as grey squares and the oscillating target as a red
-dot. The asymmetric waveform is the local function `oscWave` at the bottom of
-`dynamics.m`. `matlab/` contains `dynamics.m` plus the files it depends on:
+The lattice is plotted as grey squares, the collector as a red dot with its
+capture radius dotted, and the agents stuck to it in orange. The collector's
+capture-and-move step is at the start of the main loop in `dynamics.m`.
+`matlab/` contains `dynamics.m` plus the files it depends on:
 `Target.m`, `nearestOnSegment.m`, `neighborhoods.m`, `transition.m`,
 `alignTo.m`, `voronoiProjectToBoundary.m`, and (only needed if you set
 `fdim = 2`) `voronoiForwardArea.m` and `poly_area.m`. MATLAB needs the
@@ -167,13 +154,11 @@ The browser port implements the same VTP model as `dynamics.m` (with
   the exact starting positions (and therefore trajectories) differ from
   MATLAB's. The behavior is statistically the same.
 - The nearest static target is found by rounding the agent's position, taken
-  in the frame that moves with the field, to the rectangular lattice (exact, and much faster than scanning every lattice point).
+  in the frame that moves with the lattice, to the rectangular lattice (exact, and much faster than scanning every lattice point).
   I checked it against a brute-force scan on 2000 random points with zero
-  mismatches. The waveform `oscWave` was also checked to be exactly
-  `sin(2*pi*u)` at `n = 1`, and to spend `n/(n+1)` of the period on the outgoing
-  stroke.
-- In MATLAB the `Target` object is rebuilt every step (all components move with
-  the field), which replaces the single `setComponent` call used before.
+  mismatches.
+- In MATLAB the `Target` object is rebuilt every step (the lattice and the
+  collector both move), which replaces the single `setComponent` call used before.
 - Only `fdim = 1` is ported; the forward-area speed option (`fdim = 2`) is
   MATLAB-only.
 - The MATLAB script was not run in MATLAB while it was being written.

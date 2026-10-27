@@ -32,12 +32,19 @@ osc_ratio_y = 1;         % y asymmetry n
 osc_phase_y = 90;        % y phase offset relative to x, in degrees (90 with equal freqs/amps = circle)
 % a frequency of 0 freezes that axis at its center
 
-% TRANSLATION of the WHOLE field: the static lattice and the oscillating
-% target (with its oscillation center) all move rigidly at a constant
-% velocity. At time t the field has shifted by field_vel*t.
-field_speed = 0.2;       % translation speed, units per time step (agents move at up to 1)
-field_angle = 0;         % direction of the translation, degrees (0 = +x, 90 = +y)
-field_vel   = field_speed*[cosd(field_angle) sind(field_angle)];
+% CIRCULAR MOTION of the WHOLE field: the static lattice and the oscillating
+% target (with its oscillation center) all move rigidly, so the field's
+% center travels on a circle of radius field_radius centered on the origin.
+% At time t the field center is at field_radius*[cos(theta) sin(theta)] with
+% theta = (field_speed/field_radius)*t, so one lap takes
+% 2*pi*field_radius/field_speed steps.
+field_speed  = 0.2;      % speed along the circle, units per time step (agents move at up to 1); negative = clockwise
+field_radius = 20;       % radius of the circle (0 = the field stays put)
+if field_radius > 0
+    field_omega = field_speed/field_radius;   % angular velocity, rad per step
+else
+    field_omega = 0;
+end
 
 display=true;
 fixframe = false;
@@ -114,7 +121,7 @@ staticPts = [gx(:) gy(:)];
 nStatic = size(staticPts,1);
 oscPos = @(t) osc_center + [ osc_amp_x*oscWave(osc_freq_x*t, osc_ratio_x), ...
                              osc_amp_y*oscWave(osc_freq_y*t + osc_phase_y/360, osc_ratio_y) ];
-fieldOff = @(t) field_vel*t;          % how far the whole field has moved at time t
+fieldOff = @(t) field_radius*[cos(field_omega*t) sin(field_omega*t)];   % where the field center is at time t
 
 % components 1..nStatic are the lattice points; the LAST component is the
 % oscillating target. The Target is rebuilt every step below, because every
@@ -135,7 +142,7 @@ DT_t = cell(tmax,1);
 for t = 1:tmax
 %% Compute step
 
-% translate the whole field and move the oscillating target within it
+% move the whole field around its circle and the oscillating target within it
 off = fieldOff(t);
 tar = Target([ mat2cell(staticPts + off, ones(nStatic,1), 2); {oscPos(t) + off} ]);
 
@@ -229,7 +236,7 @@ if display==true
         frame = [com(1)-3*rmed com(1)+3*rmed com(2)-3*rmed com(2)+3*rmed];
     end
     axis(frame);
-    title(['$t=',num2str(t),',\; f_x=',num2str(osc_freq_x),',\; f_y=',num2str(osc_freq_y),',\; n=(',num2str(osc_ratio_x),',',num2str(osc_ratio_y),'),\; v_{field}=',num2str(field_speed),'$'], 'Interpreter', 'Latex');
+    title(['$t=',num2str(t),',\; f_x=',num2str(osc_freq_x),',\; f_y=',num2str(osc_freq_y),',\; n=(',num2str(osc_ratio_x),',',num2str(osc_ratio_y),'),\; v_{field}=',num2str(field_speed),',\; R_{field}=',num2str(field_radius),'$'], 'Interpreter', 'Latex');
 end
 
 %% Update

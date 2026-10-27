@@ -23,8 +23,9 @@
        asymmetry ratio n (return stroke n times faster than the outgoing
        stroke), and y can be phase-shifted relative to x.
    The WHOLE target field (the static lattice and the oscillating
-   target together) also TRANSLATES rigidly at a constant velocity: a
-   speed and a direction you choose live.
+   target together) also moves rigidly around a CIRCLE centered on the
+   origin, with a radius and a speed (along the circle) you choose live.
+   Negative speed circulates clockwise; radius 0 keeps the field still.
    Every agent homes toward whichever target (static or oscillating)
    is nearest to it.
    =========================================================== */
@@ -45,8 +46,8 @@ const PARAMS = {
   OSC_RATIO_X: 1,       // x asymmetry n: the return stroke is n times faster than the outgoing one (1 = symmetric)
   OSC_RATIO_Y: 1,       // y asymmetry n
   OSC_PHASE_Y_DEG: 90,  // y phase offset relative to x, degrees (90 with equal freqs and amps = circle)
-  FIELD_SPEED: 0.2,     // translation speed of the whole target field, units per time step (agents move at up to 1)
-  FIELD_ANGLE_DEG: 0,   // direction of that translation (0 = +x, 90 = +y)
+  FIELD_SPEED: 0.2,     // speed of the whole target field along its circle, units per time step (agents move at up to 1); negative = clockwise
+  FIELD_RADIUS: 20,     // radius of the circle the field center moves on (0 = field stays put)
   TRAIL_LEN: 600,       // how many past positions of the oscillating target are drawn
   POS_SEED: 2,          // same seeds the MATLAB script uses (rng(2), rng(18))
   ANG_SEED: 18,
@@ -172,8 +173,9 @@ class VTPSim {
     this.oscRatioY = PARAMS.OSC_RATIO_Y;
     this.oscPhaseYDeg = PARAMS.OSC_PHASE_Y_DEG;
     this.fieldSpeed = PARAMS.FIELD_SPEED;
-    this.fieldAngleDeg = PARAMS.FIELD_ANGLE_DEG;
-    this.offX = 0; this.offY = 0;      // how far the whole field has translated from its starting place
+    this.fieldRadius = PARAMS.FIELD_RADIUS;
+    this.fieldTheta = 0;               // angle of the field center on its circle (radians)
+    this.offX = 0; this.offY = 0;      // current position of the field center (= offset of the whole field)
     this.trail = [];
     this.viewMode = "swarm";       // "swarm" (MATLAB: fixframe = false) | "world" (fixed at the origin) | "field" (follows the moving field)
     this.showHeadings = true;
@@ -200,10 +202,15 @@ class VTPSim {
     this.nStatic = (nx + 1) * (ny + 1);
   }
 
-  /* velocity of the translating field */
-  fieldVel() {
-    const a = (this.fieldAngleDeg * Math.PI) / 180;
-    return [this.fieldSpeed * Math.cos(a), this.fieldSpeed * Math.sin(a)];
+  /* angular velocity of the field on its circle, rad per step (speed = radius * omega) */
+  fieldOmega() {
+    return this.fieldRadius > 0 ? this.fieldSpeed / this.fieldRadius : 0;
+  }
+
+  /* place the field center on its circle */
+  updateFieldOffset() {
+    this.offX = this.fieldRadius * Math.cos(this.fieldTheta);
+    this.offY = this.fieldRadius * Math.sin(this.fieldTheta);
   }
 
   /* oscillating target: x and y each follow their own asymmetric waveform.
@@ -239,8 +246,8 @@ class VTPSim {
     this.t = 1;                                   // MATLAB loop index of the displayed state
     this.phaseX = this.oscFreqX * this.t;         // cycles
     this.phaseY = this.oscFreqY * this.t;
-    const [fvx, fvy] = this.fieldVel();           // field offset at step t is velocity * t
-    this.offX = fvx * this.t; this.offY = fvy * this.t;
+    this.fieldTheta = this.fieldOmega() * this.t; // field angle at step t is omega * t
+    this.updateFieldOffset();
     this.trail = [];
     this.cam = null;
     this.compute();
@@ -349,8 +356,8 @@ class VTPSim {
     this.t++;
     this.phaseX += this.oscFreqX;
     this.phaseY += this.oscFreqY;
-    const [fvx, fvy] = this.fieldVel();           // accumulates, so changing the speed live is smooth
-    this.offX += fvx; this.offY += fvy;
+    this.fieldTheta += this.fieldOmega();         // accumulates, so changing the speed live is smooth
+    this.updateFieldOffset();
     this.compute();
   }
 
@@ -367,10 +374,12 @@ class VTPSim {
       r.sort((a, b) => a - b);
       cx = mx; cy = my; hw = Math.max(3 * r[N >> 1], 4);
     } else {
-      cx = this.viewMode === "field" ? this.offX : 0;
-      cy = this.viewMode === "field" ? this.offY : 0;
-      hw = 1.15 * Math.max(this.gridHalf,
-        Math.abs(this.oscCx) + this.oscAmpX, Math.abs(this.oscCy) + this.oscAmpY) + 2;
+      const following = this.viewMode === "field";
+      cx = following ? this.offX : 0;
+      cy = following ? this.offY : 0;
+      const base = Math.max(this.gridHalf,
+        Math.abs(this.oscCx) + this.oscAmpX, Math.abs(this.oscCy) + this.oscAmpY);
+      hw = 1.15 * (base + (following ? 0 : this.fieldRadius)) + 2;
     }
     if (!this.cam) this.cam = { cx, cy, hw };
     const a = 0.08;

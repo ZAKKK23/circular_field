@@ -52,15 +52,17 @@ currently nearest to it.
   `n = 3` returns three times faster, `n < 1` returns slower. Both strokes are
   half-cosines, so the motion is smooth at the turning points.
 
-- **Translating field.** The whole field, meaning the static lattice and the
-  oscillating target (with its oscillation center), also moves rigidly at a
-  constant velocity, set by a **speed** (units per time step) and a
-  **direction** (degrees). At time `t` the field has shifted by
-  `speed * (cos(dir), sin(dir)) * t`, and the oscillation happens around the
-  moving center. Agents move at up to 1 unit per step, so a field speed below
-  about 1 can be followed. In the web version, the **view** menu has *follow
-  swarm*, *fixed (world)* (camera stays at the origin so you can watch the
-  field drift away) and *follow field*.
+- **Field moving on a circle.** The whole field, meaning the static lattice and
+  the oscillating target (with its oscillation center), moves rigidly so that
+  its center travels on a circle centered on the origin. You choose the
+  **radius** `R` of the circle and the **speed** along it (units per time step;
+  negative = clockwise). At time `t` the field center is at
+  `R * (cos(theta), sin(theta))` with `theta = (speed / R) * t`, so one lap takes
+  `2*pi*R / speed` steps, and the oscillation happens around the moving center.
+  `R = 0` keeps the field still. Agents move at up to 1 unit per step, so a speed
+  below about 1 can be followed. In the web version, the **view** menu has
+  *follow swarm*, *fixed (world)* (camera stays at the origin so you can watch
+  the field circle around it) and *follow field*.
 
 Because agents choose the *nearest* target, the oscillating target mostly pulls
 in agents that are closer to it than to any lattice point. A larger lattice
@@ -90,7 +92,7 @@ then visit `http://localhost:8000/`. The live controls cover the number of
 agents, &nu;, the lattice spacing in x and y and the half-width, and, for the
 oscillating target, the frequency (slider or exact number), amplitude and
 return-speed ratio of each axis, the y phase offset, and the center, plus the
-translation speed and direction of the whole field.
+circular-motion speed and radius of the whole field.
 
 ## Running the MATLAB version
 
@@ -116,8 +118,8 @@ osc_ratio_x = 1;         % asymmetry n: return stroke n times faster (1 = symmet
 osc_ratio_y = 1;
 osc_phase_y = 90;        % y phase offset relative to x, degrees
 
-field_speed = 0.2;       % translation speed of the whole field, units per time step
-field_angle = 0;         % direction of the translation, degrees (0 = +x)
+field_speed  = 0.2;      % speed of the whole field along its circle, units per time step (negative = clockwise)
+field_radius = 20;       % radius of that circle (0 = field stays put)
 ```
 
 The lattice is plotted as grey squares and the oscillating target as a red

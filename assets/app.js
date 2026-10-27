@@ -26,7 +26,7 @@ const numAgents = $("numAgents");
 const spfSlider = $("spfSlider"), spfVal = $("spfVal");
 const viewSelect = $("viewSelect"), headingsCb = $("headingsCb");
 const fsSlider = $("fsSlider"), fsVal = $("fsVal");
-const faSlider = $("faSlider"), faVal = $("faVal");
+const frSlider = $("frSlider"), frVal = $("frVal");
 const fieldVelInfo = $("fieldVelInfo");
 const nuSlider = $("nuSlider"), nuVal = $("nuVal");
 const spXSlider = $("spXSlider"), spXVal = $("spXVal");
@@ -91,13 +91,14 @@ function rebuildLattice() {
 spfSlider.addEventListener("input", () => { sim.stepsPerFrame = +spfSlider.value; spfVal.textContent = spfSlider.value; });
 viewSelect.addEventListener("change", () => { sim.viewMode = viewSelect.value; });
 function showFieldVel() {
-  const [vx, vy] = sim.fieldVel();
   fsVal.textContent = sim.fieldSpeed.toFixed(2);
-  faVal.textContent = sim.fieldAngleDeg + "\u00b0";
-  fieldVelInfo.textContent = `v = (${vx.toFixed(2)}, ${vy.toFixed(2)}) per step`;
+  frVal.textContent = sim.fieldRadius.toFixed(1);
+  const w = sim.fieldOmega();
+  if (w === 0) { fieldVelInfo.textContent = sim.fieldRadius > 0 ? "field still (speed 0)" : "field still (radius 0)"; return; }
+  fieldVelInfo.textContent = `period ${(2 * Math.PI / Math.abs(w)).toFixed(0)} steps, ${w > 0 ? "counter-clockwise" : "clockwise"}`;
 }
 fsSlider.addEventListener("input", () => { sim.fieldSpeed = +fsSlider.value; showFieldVel(); });
-faSlider.addEventListener("input", () => { sim.fieldAngleDeg = +faSlider.value; showFieldVel(); });
+frSlider.addEventListener("input", () => { sim.fieldRadius = +frSlider.value; sim.updateFieldOffset(); showFieldVel(); });
 headingsCb.addEventListener("change", () => { sim.showHeadings = headingsCb.checked; });
 nuSlider.addEventListener("input", () => { sim.nu = +nuSlider.value; nuVal.textContent = sim.nu.toFixed(2); });
 
@@ -134,7 +135,7 @@ function restoreDefaults() {
   sim.oscCx = PARAMS.OSC_CX; cxSlider.value = sim.oscCx; cxVal.textContent = sim.oscCx.toFixed(1);
   sim.oscCy = PARAMS.OSC_CY; cySlider.value = sim.oscCy; cyVal.textContent = sim.oscCy.toFixed(1);
   sim.fieldSpeed = PARAMS.FIELD_SPEED; fsSlider.value = sim.fieldSpeed;
-  sim.fieldAngleDeg = PARAMS.FIELD_ANGLE_DEG; faSlider.value = sim.fieldAngleDeg;
+  sim.fieldRadius = PARAMS.FIELD_RADIUS; frSlider.value = sim.fieldRadius;
   showFieldVel();
   rebuildLattice();
 }
@@ -155,14 +156,14 @@ function loop() {
   statusLine.textContent =
     `t = ${sim.t} | N = ${sim.N} | ${sim.nStatic} static + 1 oscillating target | ` +
     `f = (${sim.oscFreqX.toFixed(4)}, ${sim.oscFreqY.toFixed(4)}) cycles/step | ` +
-    `n = (${sim.oscRatioX.toFixed(2)}, ${sim.oscRatioY.toFixed(2)}) | field v = ${sim.fieldSpeed.toFixed(2)} | \u03bd = ${sim.nu.toFixed(2)}`;
+    `n = (${sim.oscRatioX.toFixed(2)}, ${sim.oscRatioY.toFixed(2)}) | field v = ${sim.fieldSpeed.toFixed(2)}, R = ${sim.fieldRadius.toFixed(1)} | \u03bd = ${sim.nu.toFixed(2)}`;
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
 
 /* ---------- matlab file viewer ---------- */
 const FILE_NOTES = {
-  "dynamics.m": "Main script. Target-field settings (lattice spacing in x and y, field translation speed, x/y oscillation frequencies, amplitudes, asymmetry) are at the top, and the oscWave function is at the bottom; then the VTP loop: Delaunay neighbors, repulsion + alignment + homing, Voronoi speed governor.",
+  "dynamics.m": "Main script. Target-field settings (lattice spacing in x and y, field circular-motion speed and radius, x/y oscillation frequencies, amplitudes, asymmetry) are at the top, and the oscWave function is at the bottom; then the VTP loop: Delaunay neighbors, repulsion + alignment + homing, Voronoi speed governor.",
   "Target.m": "Target class: target geometry and the homeToTarget homing-vector method. The lattice and the oscillating target are point components of one Target object.",
   "nearestOnSegment.m": "Geometry helper used internally by Target.m for segment-shaped targets.",
   "neighborhoods.m": "Delaunay-graph neighbors of every agent, plus each agent's nearest neighbor and its distance.",
